@@ -32,12 +32,12 @@ const fe_limb_size = 56
 const fe_masklow_56bits = u64(1) << 56 - 1
 
 // zero field element
-const fe_zero = Field{
+pub const fe_zero = Field{
 	el: [u64(0), 0, 0, 0, 0, 0, 0, 0]!
 }
 
 // one field element
-const fe_one = Field{
+pub const fe_one = Field{
 	el: [u64(1), 0, 0, 0, 0, 0, 0, 0]!
 }
 
@@ -638,7 +638,7 @@ fn fe_cselect(mut z Field, a Field, b Field, c int) {
 
 // fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
 @[direct_array_access; inline]
-fn fe_cswap(mut a Field, mut b Field, c int) {
+pub fn fe_cswap(mut a Field, mut b Field, c int) {
 	// The mask is the all-1 or all-0 word
 	m := mask_64bits(c)
 	mut dummy := u64(0)
