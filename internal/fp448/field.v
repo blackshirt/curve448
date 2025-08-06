@@ -534,7 +534,7 @@ fn (mut x Field) to_bytes(mut dst []u8) ! {
 
 // fe_reduce reduces x field (mod p)
 @[direct_array_access; inline]
-pub fn fe_reduce(mut x Field) {
+fn fe_reduce(mut x Field) {
 	// by the light reduction, we have a field element representation
 	// x < 2⁴⁴⁸ + 2²³² + 2⁸, but we need x < 2⁴⁴⁸ - 2²²⁴ - 1 (p).
 	fe_carry_propagates(mut x)
@@ -627,7 +627,7 @@ pub fn fe_cmp(a Field, b Field) int {
 
 // fe_cselect set z to a if c == 1, and to b if c == 0
 @[direct_array_access; inline]
-pub fn fe_cselect(mut z Field, a Field, b Field, c int) {
+fn fe_cselect(mut z Field, a Field, b Field, c int) {
 	m := mask_64bits(c)
 	// Select between a and b
 	for i := 0; i < 8; i++ {
@@ -638,7 +638,7 @@ pub fn fe_cselect(mut z Field, a Field, b Field, c int) {
 
 // fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
 @[direct_array_access; inline]
-pub fn fe_cswap(mut a Field, mut b Field, c int) {
+fn fe_cswap(mut a Field, mut b Field, c int) {
 	// The mask is the all-1 or all-0 word
 	m := mask_64bits(c)
 	mut dummy := u64(0)
