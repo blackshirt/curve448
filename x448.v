@@ -4,7 +4,7 @@
 //
 // This module implements building block for elliptic-curve diffie-helman
 // key exchange (ECDH) mechanism through curve448 curve, offering 224 bits of security.
-module x448
+module curve448
 
 import internal.fp448
 
