@@ -131,7 +131,7 @@ pub fn fe_sqr(mut z Field, a Field) {
 }
 
 @[direct_array_access; inline]
-fn fe_sqr_generic(mut z Field, x Field) {
+fn fe_sqr_generic(mut z Field, a Field) {
 	// squaring works similar  with multiplication, but have special symmetric properties internally
 	// so, its reduces calculation complexities
 	// 											  a7	a6	  a5	| a4	  a3	a2	  a1	a0
@@ -147,79 +147,63 @@ fn fe_sqr_generic(mut z Field, x Field) {
 	// a7a7  a6a7  a5a7 | a4a7  a3a7  a2a7  a1a7 | a0a7				 |							 	 +
 	// ------------------------------------------------------------------------------------------
 	// r14	 r13   r12	| r11    r10   r9	 r8	 |  r7	  r6	 r5	 |  r4    r3	 r2	  r1	r0
-	//
-	// As we know, p = 2⁴⁴⁸ - 2²²⁴ - 1 and we have reduction identity,
-	// a * 2⁴⁴⁸ + b = a * (2²²⁴ + 1) + b
-	// a * 2⁴⁴⁸ + b = a * 2²²⁴ + a + b
-	//
-	// we can use this to reduce the limbs that would overflow 448 bits.
-	//  	r8  * 2⁴⁴⁸ 	=> r8 * 2²²⁴ * 2⁰ + r8 * 2⁰,
-	//		r9  * 2⁵⁰⁴ 	=> r9 * 2⁴⁴⁸ * 2⁵⁶   	=> r9 * 2²²⁴ * 2⁵⁶ + r9 * 2⁵⁶
-	// 		r10 * 2⁵⁶⁰ 	=> r10 * 2⁴⁴⁸ * 2¹¹²	=> r10 * 2²²⁴ * 2¹¹² + r10 * 2¹¹²
-	// 		... etc
-	// 		r12 * 2⁶⁷² 	=> r12 * 2⁴⁴⁸ + r12 * 2²²⁴
-	//   				=> r12 * 2²²⁴ + r12 + r12 * 2²²⁴
-	//   				=> 2 * r12 * 2²²⁴ + r12
-	//
-	// 			a7			a6	  			a5				| a4	  		  a3	a2	  		a1			a0
-	//			a7			a6	  			a5				| a4	  		  a3	a2	  		a1			a0	 		x
-	//			-----------------------------------------------------------------------------------------------------
-	//			a7a0  		a6a0  			a5a0 			| a4a0  	 	  a3a0  a2a0  		a1a0  		a0a0  		+	
-	//			a6a1  		a5a1  			a4a1 			| a3a1+a7a1  	  a2a1  a1a1  		a0a1  		a7a1	 	+
-	//			a5a2  		a4a2  			a3a2+a7a2 		| a2a2+a6a2  	  a1a2  a0a2  		a7a2  		a6a2	 	+
-	//			a4a3  		a3a3+a7a3  		a2a3+a6a3		| a1a3+a5a3  	  a0a3  a7a3  		a6a3  		a5a3	 	+
-	//			a3a4+a7a4	a2a4+a6a4		a1a4+a5a4		| a0a4+a4a4	 	  a7a4  a6a4  		a5a4  		a4a4	 	+
-	//			a2a5+a6a5  	a1a5+a5a5		a0a5+a4a5		| a3a5+a7a5+a7a5  a6a5 	a5a5  		a4a5  		a3a5+a7a5	+
-	// 		 	a1a6+a5a6	a0a6+a4a6		a3a6+a7a6+a7a6 	| a2a6+a6a6+a6a6  a5a6  a4a6  	   	a3a6+a7a6 	a2a6+a6a6	+
-	// 			a0a7+a4a7	a3a7+a7a7+a7a7 	a2a7+a6a7+a6a7	| a1a7+a5a7+a5a7  a4a7	a3a7+a7a7	a2a7+a6a7	a1a7+a5a7
-	//			=========================================================================================================
-	//			t7			t6				t5				  t4			  t3	t2			t1			t0
+	// -----------------------------------------------------------------------------------------------------
+	// a7a0  		a6a0  			a5a0 			| a4a0  	 	  a3a0  a2a0  		a1a0  		a0a0  		+	
+	// a6a1  		a5a1  			a4a1 			| a3a1+a7a1  	  a2a1  a1a1  		a0a1  		a7a1	 	+
+	// a5a2  		a4a2  			a3a2+a7a2 		| a2a2+a6a2  	  a1a2  a0a2  		a7a2  		a6a2	 	+
+	// a4a3  		a3a3+a7a3  		a2a3+a6a3		| a1a3+a5a3  	  a0a3  a7a3  		a6a3  		a5a3	 	+
+	// a3a4+a7a4	a2a4+a6a4		a1a4+a5a4		| a0a4+a4a4	 	  a7a4  a6a4  		a5a4  		a4a4	 	+
+	// a2a5+a6a5  	a1a5+a5a5		a0a5+a4a5		| a3a5+a7a5+a7a5  a6a5 	a5a5  		a4a5  		a3a5+a7a5	+
+	// a1a6+a5a6	a0a6+a4a6		a3a6+a7a6+a7a6 	| a2a6+a6a6+a6a6  a5a6  a4a6  	   	a3a6+a7a6 	a2a6+a6a6	+
+	// a0a7+a4a7	a3a7+a7a7+a7a7 	a2a7+a6a7+a6a7	| a1a7+a5a7+a5a7  a4a7	a3a7+a7a7	a2a7+a6a7	a1a7+a5a7
+	// =========================================================================================================
+	// t7			t6				t5				  t4			  t3	t2			t1			t0
 	//
 	// unoptimizead a * a
 	// we have properties for symmetric field, aᵢ.aⱼ = aⱼ.aᵢ
-	a0a0 := mult_64(x.el[0], x.el[0])
-	a1a0 := mult_64(x.el[1], x.el[0]) // = a0a1
-	a2a0 := mult_64(x.el[2], x.el[0]) // = a0a2
-	a3a0 := mult_64(x.el[3], x.el[0]) // = a0a3
-	a4a0 := mult_64(x.el[4], x.el[0]) // = a0a4
-	a5a0 := mult_64(x.el[5], x.el[0]) // = a0a5
-	a6a0 := mult_64(x.el[6], x.el[0]) // = a0a6
-	a7a0 := mult_64(x.el[7], x.el[0]) // = a0a7
+	a0a0 := mult_64(a.el[0], a.el[0])
+	a1a0 := mult_64(a.el[1], a.el[0]) // = a0a1
+	a2a0 := mult_64(a.el[2], a.el[0]) // = a0a2
+	a3a0 := mult_64(a.el[3], a.el[0]) // = a0a3
+	a4a0 := mult_64(a.el[4], a.el[0]) // = a0a4
+	a5a0 := mult_64(a.el[5], a.el[0]) // = a0a5
+	a6a0 := mult_64(a.el[6], a.el[0]) // = a0a6
+	a7a0 := mult_64(a.el[7], a.el[0]) // = a0a7
 
-	a1a1 := mult_64(x.el[1], x.el[1])
-	a2a1 := mult_64(x.el[2], x.el[1])
-	a3a1 := mult_64(x.el[3], x.el[1])
-	a4a1 := mult_64(x.el[4], x.el[1])
-	a5a1 := mult_64(x.el[5], x.el[1])
-	a6a1 := mult_64(x.el[6], x.el[1])
-	a7a1 := mult_64(x.el[7], x.el[1])
+	a1a1 := mult_64(a.el[1], a.el[1])
+	a2a1 := mult_64(a.el[2], a.el[1])
+	a3a1 := mult_64(a.el[3], a.el[1])
+	a4a1 := mult_64(a.el[4], a.el[1])
+	a5a1 := mult_64(a.el[5], a.el[1])
+	a6a1 := mult_64(a.el[6], a.el[1])
+	a7a1 := mult_64(a.el[7], a.el[1])
 
-	a2a2 := mult_64(x.el[2], x.el[2])
-	a3a2 := mult_64(x.el[3], x.el[2])
-	a4a2 := mult_64(x.el[4], x.el[2])
-	a5a2 := mult_64(x.el[5], x.el[2])
-	a6a2 := mult_64(x.el[6], x.el[2])
-	a7a2 := mult_64(x.el[7], x.el[2])
+	a2a2 := mult_64(a.el[2], a.el[2])
+	a3a2 := mult_64(a.el[3], a.el[2])
+	a4a2 := mult_64(a.el[4], a.el[2])
+	a5a2 := mult_64(a.el[5], a.el[2])
+	a6a2 := mult_64(a.el[6], a.el[2])
+	a7a2 := mult_64(a.el[7], a.el[2])
 
-	a3a3 := mult_64(x.el[3], x.el[3])
-	a4a3 := mult_64(x.el[4], x.el[3])
-	a5a3 := mult_64(x.el[5], x.el[3])
-	a6a3 := mult_64(x.el[6], x.el[3])
-	a7a3 := mult_64(x.el[7], x.el[3])
+	a3a3 := mult_64(a.el[3], a.el[3])
+	a4a3 := mult_64(a.el[4], a.el[3])
+	a5a3 := mult_64(a.el[5], a.el[3])
+	a6a3 := mult_64(a.el[6], a.el[3])
+	a7a3 := mult_64(a.el[7], a.el[3])
 
-	a4a4 := mult_64(x.el[4], x.el[4])
-	a5a4 := mult_64(x.el[5], x.el[4])
-	a6a4 := mult_64(x.el[6], x.el[4])
-	a7a4 := mult_64(x.el[7], x.el[4])
+	a4a4 := mult_64(a.el[4], a.el[4])
+	a5a4 := mult_64(a.el[5], a.el[4])
+	a6a4 := mult_64(a.el[6], a.el[4])
+	a7a4 := mult_64(a.el[7], a.el[4])
 
-	a5a5 := mult_64(x.el[5], x.el[5])
-	a6a5 := mult_64(x.el[6], x.el[5])
-	a7a5 := mult_64(x.el[7], x.el[5])
+	a5a5 := mult_64(a.el[5], a.el[5])
+	a6a5 := mult_64(a.el[6], a.el[5])
+	a7a5 := mult_64(a.el[7], a.el[5])
 
-	a6a6 := mult_64(x.el[6], x.el[6])
-	a7a6 := mult_64(x.el[7], x.el[6])
+	a6a6 := mult_64(a.el[6], a.el[6])
+	a7a6 := mult_64(a.el[7], a.el[6])
 
-	a7a7 := mult_64(x.el[7], x.el[7])
+	a7a7 := mult_64(a.el[7], a.el[7])
 
 	// t0 = a0a0 + a4a4 + a6a6 + (a7a1+a1a7) + (a6a2+ a2a6) + (a5a3+ a3a5)  + (a5a7+a7a5)
 	mut t0 := add_128(a0a0, a4a4)
