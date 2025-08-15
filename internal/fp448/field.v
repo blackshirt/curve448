@@ -643,70 +643,17 @@ fn (mut x Field) to_bytes(mut dst []u8) ! {
 	// reduces the field first
 	fe_reduce(mut x)
 
-	// serialized in little-endian form
-	dst[0] = u8(x.el[0])
-	dst[1] = u8(x.el[0] >> u64(8))
-	dst[2] = u8(x.el[0] >> u64(16))
-	dst[3] = u8(x.el[0] >> u64(24))
-	dst[4] = u8(x.el[0] >> u64(32))
-	dst[5] = u8(x.el[0] >> u64(40))
-	dst[6] = u8(x.el[0] >> u64(48))
-
-	dst[7] = u8(x.el[1])
-	dst[8] = u8(x.el[1] >> u64(8))
-	dst[9] = u8(x.el[1] >> u64(16))
-	dst[10] = u8(x.el[1] >> u64(24))
-	dst[11] = u8(x.el[1] >> u64(32))
-	dst[12] = u8(x.el[1] >> u64(40))
-	dst[13] = u8(x.el[1] >> u64(48))
-
-	dst[14] = u8(x.el[2])
-	dst[15] = u8(x.el[2] >> u64(8))
-	dst[16] = u8(x.el[2] >> u64(16))
-	dst[17] = u8(x.el[2] >> u64(24))
-	dst[18] = u8(x.el[2] >> u64(32))
-	dst[19] = u8(x.el[2] >> u64(40))
-	dst[20] = u8(x.el[2] >> u64(48))
-
-	dst[21] = u8(x.el[3])
-	dst[22] = u8(x.el[3] >> u64(8))
-	dst[23] = u8(x.el[3] >> u64(16))
-	dst[24] = u8(x.el[3] >> u64(24))
-	dst[25] = u8(x.el[3] >> u64(32))
-	dst[26] = u8(x.el[3] >> u64(40))
-	dst[27] = u8(x.el[3] >> u64(48))
-
-	dst[28] = u8(x.el[4])
-	dst[29] = u8(x.el[4] >> u64(8))
-	dst[30] = u8(x.el[4] >> u64(16))
-	dst[31] = u8(x.el[4] >> u64(24))
-	dst[32] = u8(x.el[4] >> u64(32))
-	dst[33] = u8(x.el[4] >> u64(40))
-	dst[34] = u8(x.el[4] >> u64(48))
-
-	dst[35] = u8(x.el[5])
-	dst[36] = u8(x.el[5] >> u64(8))
-	dst[37] = u8(x.el[5] >> u64(16))
-	dst[38] = u8(x.el[5] >> u64(24))
-	dst[39] = u8(x.el[5] >> u64(32))
-	dst[40] = u8(x.el[5] >> u64(40))
-	dst[41] = u8(x.el[5] >> u64(48))
-
-	dst[42] = u8(x.el[6])
-	dst[43] = u8(x.el[6] >> u64(8))
-	dst[44] = u8(x.el[6] >> u64(16))
-	dst[45] = u8(x.el[6] >> u64(24))
-	dst[46] = u8(x.el[6] >> u64(32))
-	dst[47] = u8(x.el[6] >> u64(40))
-	dst[48] = u8(x.el[6] >> u64(48))
-
-	dst[49] = u8(x.el[7])
-	dst[50] = u8(x.el[7] >> u64(8))
-	dst[51] = u8(x.el[7] >> u64(16))
-	dst[52] = u8(x.el[7] >> u64(24))
-	dst[53] = u8(x.el[7] >> u64(32))
-	dst[54] = u8(x.el[7] >> u64(40))
-	dst[55] = u8(x.el[7] >> u64(48))
+	// serialized x field in little-endian form
+	for i := 0; i < 7; i++ {
+		dst[i + 0] = u8(x.el[0] >> u64(i * 8))
+		dst[i + 7] = u8(x.el[1] >> u64(i * 8))
+		dst[i + 14] = u8(x.el[2] >> u64(i * 8))
+		dst[i + 21] = u8(x.el[3] >> u64(i * 8))
+		dst[i + 28] = u8(x.el[4] >> u64(i * 8))
+		dst[i + 35] = u8(x.el[5] >> u64(i * 8))
+		dst[i + 42] = u8(x.el[6] >> u64(i * 8))
+		dst[i + 49] = u8(x.el[7] >> u64(i * 8))
+	}
 }
 
 // fe_reduce reduces x field (mod p)
