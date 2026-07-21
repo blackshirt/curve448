@@ -113,7 +113,7 @@ pub fn fe_sub(mut z Field, a Field, b Field) {
 	// we add 2 * p.el[i] (which is at least 2^57 - 4) to a.el[i] before subtracting b.el[i].
 	// We then extract the carry (which acts as a borrow flag) and mask the limb.
 	for i := 0; i < 8; i++ {
-		// add by 2 * p.el[i]
+	// add by 2 * p.el[i]
 		z.el[i] = (a.el[i] + (fe_p.el[i] << 1)) - b.el[i]
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = z.el[i] & fe_masklow_56bits
@@ -131,6 +131,8 @@ pub fn fe_sub(mut z Field, a Field, b Field) {
 	for i := 1; i < 8; i++ {
 		z.el[i] += c[i - 1]
 	}
+
+	fe_carry_propagates(mut z)
 }
 
 // fe_negate negates a field element: z = -a (mod p).
@@ -168,6 +170,9 @@ pub fn fe_negate(mut z Field, a Field) {
 	for i := 1; i < 8; i++ {
 		z.el[i] += c[i - 1]
 	}
+
+	// final carry
+	fe_carry_propagates(mut z)
 }
 
 // fe_clone clones x into z
