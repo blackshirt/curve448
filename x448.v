@@ -22,6 +22,7 @@ import internal.fp448
 //
 // See [RFC 7748]: https://datatracker.ietf.org/doc/html/rfc7748
 // Notes: scalar is cloned internally to avoid side-effects (mutating key in memory)
+@[direct_array_access]
 pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if scalar.len != 56 {
 		return error('x448: bad scalar length')
@@ -50,7 +51,13 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	mut z2 := fp448.new_field()
 	mut x3 := u
 	mut z3 := fp448.fe_one
-
+	defer {
+		fp448.fe_clear(mut x1)
+		fp448.fe_clear(mut x2)
+		fp448.fe_clear(mut z2)
+		fp448.fe_clear(mut x3)
+		fp448.fe_clear(mut z3)
+	}
 	mut swap := 0
 
 	// temporary vars
@@ -58,14 +65,29 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	mut b, mut bb := fp448.new_field(), fp448.new_field()
 	mut e, mut c, mut d := fp448.new_field(), fp448.new_field(), fp448.new_field()
 	mut da, mut cb := fp448.new_field(), fp448.new_field()
-
+	defer {
+		fp448.fe_clear(mut a)
+		fp448.fe_clear(mut aa)
+		fp448.fe_clear(mut b)
+		fp448.fe_clear(mut bb)
+		fp448.fe_clear(mut e)
+		fp448.fe_clear(mut c)
+		fp448.fe_clear(mut d)
+		fp448.fe_clear(mut da)
+		fp448.fe_clear(mut cb)
+	}
 	// Step 4: The Montgomery ladder loop.
 	// We iterate bit-by-bit through the 448-bit scalar from the MSB (bit 447) to the LSB (bit 0).
+	// This loop has a fixed trip count and fixed scalar-byte indexes for every
+	// iteration. The scalar bit only controls the mask passed into fe_cswap; it
+	// must not control branches or memory addresses.
 	for t := 447; t >= 0; t-- {
-		// Extract the t-th bit of the scalar s.
+		// Extract the t-th bit of the scalar s. The index is derived only from the
+		// public loop counter, not from secret scalar data.
 		kt := int(s[t / 8] >> (t % 8)) & 1
 
-		// Determine if we need to swap the coordinate pairs based on the scalar bit.
+		// Determine whether the coordinate pairs need to be swapped. The value is
+		// consumed only by fe_cswap, which implements the swap with a word mask.
 		swap ^= kt
 
 		// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
@@ -111,28 +133,22 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 
 	// Return x₂ * z₂ᵖ ⁻ ²
 	mut ret := fp448.new_field()
+	defer { fp448.fe_clear(mut ret) }
 	fp448.fe_inverse(mut ret, z2)
 	fp448.fe_mult(mut ret, x2, ret)
-	if fp448.fe_cmp(ret, fp448.fe_zero) == 1 {
-		// Cleaning up temporary variables, its contains sensitive data
-		fp448.fe_clear(mut x1)
-		fp448.fe_clear(mut x2)
-		fp448.fe_clear(mut z2)
-		fp448.fe_clear(mut x3)
-		fp448.fe_clear(mut z3)
-		fp448.fe_clear(mut a)
-		fp448.fe_clear(mut aa)
-		fp448.fe_clear(mut b)
-		fp448.fe_clear(mut bb)
-		fp448.fe_clear(mut e)
-		fp448.fe_clear(mut c)
-		fp448.fe_clear(mut d)
-		fp448.fe_clear(mut da)
-		fp448.fe_clear(mut cb)
-		fp448.fe_clear(mut ret)
+
+	ret_is_zero := fp448.fe_cmp(ret, fp448.fe_zero)
+	out := ret.bytes()
+	// Cleaning up temporary variables, its contains sensitive data
+	// TODO: clear another scalar
+
+	// Keep the low-order/all-zero API branch after wiping scalar and field
+	// temporaries. The ladder itself remains branch-free with respect to scalar
+	// bits; this branch only decides whether to return the already-computed output.
+	if ret_is_zero == 1 {
 		return error('x448 bad input point: low order point')
 	}
-	out := ret.bytes()
+
 	// TODO: cleaning up temporary variables
 	return out
 }

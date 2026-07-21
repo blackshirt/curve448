@@ -48,8 +48,10 @@ const fe_p = Field{
 		u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFF)]!
 }
 
-// fe_clear overwrites a field element in-place. It is intended for wiping
-// temporary values that may contain secret-dependent data after use.
+// fe_clear overwrites a field element in-place. It is intended for best-effort
+// source-level wiping of temporary values that may contain secret-dependent data
+// after use. Strict secure-zeroization guarantees require auditing generated
+// C/assembly or replacing this with a compiler-resistant wipe primitive.
 @[direct_array_access; inline]
 pub fn fe_clear(mut z Field) {
 	for i := 0; i < 8; i++ {
@@ -255,7 +257,8 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 
 	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
 
-	// Avoid leaving secret-dependent intermediates in these reusable stack slots.
+	// Best-effort source-level clearing of reusable stack slots. For strict
+	// zeroization guarantees, verify the generated C/assembly does not elide it.
 	clear_uint128x7(mut z0)
 	clear_uint128x7(mut z1)
 	clear_uint128x7(mut z2)
