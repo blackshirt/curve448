@@ -29,7 +29,7 @@ pub fn new_field() Field {
 // The size of field limb, in bits
 const fe_limb_size = 56
 // Masking value for field's limb value, ie, 0x00ff_ffff_ffff_ffff
-const fe_masklow_56bits = u64(1) << 56 - 1
+const fe_masklow_56bits = u64(0x00ff_ffff_ffff_ffff)
 
 // zero field element
 pub const fe_zero = Field{
@@ -96,6 +96,7 @@ pub fn fe_add(mut z Field, a Field, b Field) {
 	for i := 1; i < 8; i++ {
 		z.el[i] += c[i - 1]
 	}
+	fe_carry_propagates(mut z)
 }
 
 // fe_sub performs modular field subtraction: z = a - b (mod p).
@@ -112,6 +113,7 @@ pub fn fe_sub(mut z Field, a Field, b Field) {
 	// we add 2 * p.el[i] (which is at least 2^57 - 4) to a.el[i] before subtracting b.el[i].
 	// We then extract the carry (which acts as a borrow flag) and mask the limb.
 	for i := 0; i < 8; i++ {
+		// add by 2 * p.el[i]
 		z.el[i] = (a.el[i] + (fe_p.el[i] << 1)) - b.el[i]
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = z.el[i] & fe_masklow_56bits
@@ -293,23 +295,47 @@ pub fn fe_mult_32(mut z Field, x Field, y u32) {
 	z.el[5] = x5lo + x4hi
 	z.el[6] = x6lo + x5hi
 	z.el[7] = x7lo + x6hi
+
+	fe_carry_propagates(mut z)
 }
 
 // set_bytes sets the field values from bytes array
 @[direct_array_access; inline]
-pub fn (mut z Field) set_bytes(b []u8) {
+pub fn (mut z Field) set_bytes(b []u8) ! {
 	if b.len != 56 {
-		panic('bad set_bytes input')
+		return error('bad set_bytes input')
 	}
-	// in little-endian form
-	z.el[0] = u64(b[0]) | u64(b[1]) << 8 | u64(b[2]) << 16 | u64(b[3]) << 24 | u64(b[4]) << 32 | u64(b[5]) << 40 | u64(b[6]) << 48
-	z.el[1] = u64(b[7]) | u64(b[8]) << 8 | u64(b[9]) << 16 | u64(b[10]) << 24 | u64(b[11]) << 32 | u64(b[12]) << 40 | u64(b[13]) << 48
-	z.el[2] = u64(b[14]) | u64(b[15]) << 8 | u64(b[16]) << 16 | u64(b[17]) << 24 | u64(b[18]) << 32 | u64(b[19]) << 40 | u64(b[20]) << 48
-	z.el[3] = u64(b[21]) | u64(b[22]) << 8 | u64(b[23]) << 16 | u64(b[24]) << 24 | u64(b[25]) << 32 | u64(b[26]) << 40 | u64(b[27]) << 48
-	z.el[4] = u64(b[28]) | u64(b[29]) << 8 | u64(b[30]) << 16 | u64(b[31]) << 24 | u64(b[32]) << 32 | u64(b[33]) << 40 | u64(b[34]) << 48
-	z.el[5] = u64(b[35]) | u64(b[36]) << 8 | u64(b[37]) << 16 | u64(b[38]) << 24 | u64(b[39]) << 32 | u64(b[40]) << 40 | u64(b[41]) << 48
-	z.el[6] = u64(b[42]) | u64(b[43]) << 8 | u64(b[44]) << 16 | u64(b[45]) << 24 | u64(b[46]) << 32 | u64(b[47]) << 40 | u64(b[48]) << 48
-	z.el[7] = u64(b[49]) | u64(b[50]) << 8 | u64(b[51]) << 16 | u64(b[52]) << 24 | u64(b[53]) << 32 | u64(b[54]) << 40 | u64(b[55]) << 48
+
+	// Parse little-endian limbs
+	for i := 0; i < 8; i++ {
+		mut limb := u64(0)
+		for j := 0; j < 7; j++ {
+			limb |= u64(b[i * 7 + j]) << (j * 8)
+		}
+		z.el[i] = limb
+	}
+	// Verify canonicality: x must be strictly less than p
+	if !z.is_canonical() {
+		return error('non-canonical field element (x >= p)')
+	}
+}
+
+// Check if field element is in canonical form [0, p-1]
+fn (z Field) is_canonical() bool {
+	// Return false if any limb exceeds 56 bits
+	for i := 0; i < 8; i++ {
+		if z.el[i] > fe_masklow_56bits { return false }
+	}
+
+	// Test if z >= p by computing carry of z + (2^224 + 1)
+	mut c := u64(1) // +1 bit 0
+	for i := 0; i < 8; i++ {
+		add := if i == 4 { u64(1) } else { u64(0) } // +1 bit 224
+		sum := z.el[i] + add + c
+		c = sum >> 56
+	}
+	// If c == 1, then z + 2^224 + 1 >= 2^448 => z >= p
+	return c == 0
 }
 
 // bytes serializes reduced x field into bytes
@@ -349,48 +375,24 @@ fn fe_reduce(mut x Field) {
 	// x < 2⁴⁴⁸ + 2²³² + 2⁸, but we need x < 2⁴⁴⁸ - 2²²⁴ - 1 (p).
 	fe_carry_propagates(mut x)
 
-	// If x >= 2⁴⁴⁸ - 2²²⁴ - 1, then x + 2²²⁴ + 1 >= 2⁴⁴⁸, which would overflow 2⁴⁴⁸ - 1,
-	// ie, generating a carry. That is, c will be 0 if x < 2⁴⁴⁸ - 2²²⁴ - 1, and 1 otherwise.
-	// Add 1 + 2²²⁴ to test carry generation
-	mut c := u64(0)
-	c = (x.el[0] + 1) >> fe_limb_size
-	c = (x.el[1] + c) >> fe_limb_size
-	c = (x.el[2] + c) >> fe_limb_size
-	c = (x.el[3] + c) >> fe_limb_size
-	c = (x.el[4] + c + 1) >> fe_limb_size
-	c = (x.el[5] + c) >> fe_limb_size
-	c = (x.el[6] + c) >> fe_limb_size
-	c = (x.el[7] + c) >> fe_limb_size
+	// Test if x + 2^224 + 1 >= 2^448 (equivalent to x >= p)
+	mut c := u64(1)
+	for i := 0; i < 8; i++ {
+		add := if i == 4 { u64(1) } else { u64(0) }
+		s := x.el[i] + add + c
+		c = s >> fe_limb_size
+	}
 
-	// If x < 2⁴⁴⁸ - 2²²⁴ - 1 and c = 0, this will be a no-op. Otherwise,
-	// it's effectively applying the reduction identity to the carry.
+	// Reduce by adding c*(2^224 + 1)
 	x.el[0] += c
 	x.el[4] += c
 
-	// additional carry
-	x.el[1] += (x.el[0] >> fe_limb_size)
-	x.el[0] &= fe_masklow_56bits
-
-	x.el[2] += (x.el[1] >> fe_limb_size)
-	x.el[1] &= fe_masklow_56bits
-
-	x.el[3] += (x.el[2] >> fe_limb_size)
-	x.el[2] &= fe_masklow_56bits
-
-	x.el[4] += (x.el[3] >> fe_limb_size)
-	x.el[3] &= fe_masklow_56bits
-
-	x.el[5] += (x.el[4] >> fe_limb_size)
-	x.el[4] &= fe_masklow_56bits
-
-	x.el[6] += (x.el[5] >> fe_limb_size)
-	x.el[5] &= fe_masklow_56bits
-
-	x.el[7] += (x.el[6] >> fe_limb_size)
-	x.el[6] &= fe_masklow_56bits
-
-	// no additional carry
-	x.el[7] &= fe_masklow_56bits
+	c = 0
+	for i := 0; i < 8; i++ {
+		s := x.el[i] + c
+		x.el[i] = s & fe_masklow_56bits
+		c = s >> fe_limb_size
+	}
 }
 
 // fe_carry_propagates performs a single pass of carry propagation across the field.
@@ -399,20 +401,23 @@ fn fe_reduce(mut x Field) {
 @[direct_array_access; inline]
 fn fe_carry_propagates(mut x Field) {
 	// Extract the carry (overflow above 56 bits) from each limb.
-	mut c := [8]u64{}
+	mut c := u64(0)
 	for i := 0; i < 8; i++ {
-		c[i] = x.el[i] >> fe_limb_size
+		s := x.el[i] + c
+		x.el[i] = s & fe_masklow_56bits
+		c = s >> fe_limb_size
 	}
+	x.el[0] += c
+	x.el[4] += c
 
-	// the modulo identity was p = 2⁴⁴⁸- 2²²⁴ - 1, ie, 2⁴⁴⁸ = 2²²⁴+1 (mod p)
-	x.el[0] = (x.el[0] & fe_masklow_56bits) + c[7]
-	x.el[1] = (x.el[1] & fe_masklow_56bits) + c[0]
-	x.el[2] = (x.el[2] & fe_masklow_56bits) + c[1]
-	x.el[3] = (x.el[3] & fe_masklow_56bits) + c[2]
-	x.el[4] = (x.el[4] & fe_masklow_56bits) + c[3] + c[7]
-	x.el[5] = (x.el[5] & fe_masklow_56bits) + c[4]
-	x.el[6] = (x.el[6] & fe_masklow_56bits) + c[5]
-	x.el[7] = (x.el[7] & fe_masklow_56bits) + c[6]
+	c = 0
+	for i := 0; i < 8; i++ {
+		s := x.el[i] + c
+		x.el[i] = s & fe_masklow_56bits
+		c = s >> fe_limb_size
+	}
+	x.el[0] += c
+	x.el[4] += c
 }
 
 // fe_equal checks whether a == b, return 1 if it true, 0 otherwise

@@ -43,7 +43,7 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	s[55] |= 128
 
 	mut u := fp448.new_field()
-	u.set_bytes(point)
+	u.set_bytes(point)!
 
 	// setup vars
 	mut x1 := u
