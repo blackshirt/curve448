@@ -113,7 +113,7 @@ pub fn fe_sub(mut z Field, a Field, b Field) {
 	// we add 2 * p.el[i] (which is at least 2^57 - 4) to a.el[i] before subtracting b.el[i].
 	// We then extract the carry (which acts as a borrow flag) and mask the limb.
 	for i := 0; i < 8; i++ {
-	// add by 2 * p.el[i]
+		// add by 2 * p.el[i]
 		z.el[i] = (a.el[i] + (fe_p.el[i] << 1)) - b.el[i]
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = z.el[i] & fe_masklow_56bits
@@ -710,6 +710,9 @@ fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Ui
 	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
 	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
 	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
+
+	// reduce
+	fe_carry_propagates(mut z)
 }
 
 @[direct_array_access; inline]
