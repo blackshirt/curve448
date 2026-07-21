@@ -1007,13 +1007,15 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	x := [x0, x1, x2, x3]!
-	y := [y0, y1, y2, y3]!
+	mut x := [x0, x1, x2, x3]!
+	mut y := [y0, y1, y2, y3]!
 	for i := 0; i < 4; i++ {
 		for j := 0; j < 4; j++ {
 			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
 		}
 	}
+	clear_u64x4(mut x)
+	clear_u64x4(mut y)
 }
 
 @[direct_array_access; inline]
@@ -1056,7 +1058,7 @@ fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Ui
 	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
 }
 
-// fe_mult_generic multiplies two field elements using a two-way Karatsuba split.
+// fe_mult_karatsuba multiplies two field elements using a two-way Karatsuba split.
 //
 // The input is split into low and high 224-bit halves, each containing four
 // 56-bit limbs:
@@ -1126,4 +1128,33 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	mut t7 := add_128(r[7], r[11])
 
 	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+
+	// Avoid leaving secret-dependent intermediates in these reusable stack slots.
+	clear_uint128x7(mut z0)
+	clear_uint128x7(mut z1)
+	clear_uint128x7(mut z2)
+	clear_uint128x15(mut r)
+}
+
+@[direct_array_access; inline]
+fn clear_u64x4(mut values [4]u64) {
+	for i := 0; i < 4; i++ {
+		values[i] = 0
+	}
+}
+
+@[direct_array_access; inline]
+fn clear_uint128x7(mut values [7]unsigned.Uint128) {
+	zero := unsigned.uint128_new(0, 0)
+	for i := 0; i < 7; i++ {
+		values[i] = zero
+	}
+}
+
+@[direct_array_access; inline]
+fn clear_uint128x15(mut values [15]unsigned.Uint128) {
+	zero := unsigned.uint128_new(0, 0)
+	for i := 0; i < 15; i++ {
+		values[i] = zero
+	}
 }
