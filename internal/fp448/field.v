@@ -48,6 +48,15 @@ const fe_p = Field{
 		u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFF)]!
 }
 
+// fe_clear overwrites a field element in-place. It is intended for wiping
+// temporary values that may contain secret-dependent data after use.
+@[direct_array_access; inline]
+pub fn fe_clear(mut z Field) {
+	for i := 0; i < 8; i++ {
+		z.el[i] = 0
+	}
+}
+
 // fe_add performs modular field addition: z = a + b (mod p).
 // It adds the elements limb-by-limb, extracts the carries, and performs a single
 // reduction step using the Solinas prime identity: 2^448 = 2^224 + 1 (mod p).
@@ -175,456 +184,88 @@ pub fn fe_mult(mut z Field, x Field, y Field) {
 	fe_mult_karatsuba(mut z, x, y)
 }
 
-// fe_mult_generic is a general and unoptimized schoolbook field multiplication
+// fe_mult_karatsuba multiplies two field elements using a two-way Karatsuba split.
+//
+// The input is split into low and high 224-bit halves, each containing four
+// 56-bit limbs:
+//
+//     x = x0 + x1*B⁴,  y = y0 + y1*B⁴,  B = 2⁵⁶
+//
+// Karatsuba computes the unreduced product with three 4-limb products instead
+// of four:
+//
+//     z0 = x0*y0
+//     z2 = x1*y1
+//     z1 = (x0+x1)*(y0+y1) - z0 - z2
+//     x*y = z0 + z1*B⁴ + z2*B⁸
+//
+// The resulting 15 polynomial limbs are then folded modulo
+// p = 2⁴⁴⁸ - 2²²⁴ - 1 by B⁸ = B⁴ + 1. Terms at B⁸..B¹⁴ are first folded to
+// positions i-8 and i-4; terms that land at B⁸..B¹⁰ from the first fold are
+// folded once more. All arithmetic stays below 128 bits: the largest product
+// term is a sum of a handful of 57-bit-by-57-bit products.
 @[direct_array_access; inline]
-fn fe_mult_generic(mut z Field, x Field, y Field) {
-	// Limb multiplication works like pen-and-paper columnar multiplication, but
-	// with 56-bit limbs instead of digits.
-	// 											  a7	a6	  a5	| a4	  a3	a2	  a1	a0
-	//											  b7	b6	  b5	| b4	  b3	b2	  b1	b0	 x
-	//											  ------------------------------------------------
-	//								  			 | a7b0  a6b0  a5b0  | a4b0  a3b0  a2b0  a1b0  a0b0   +
-	//									    a7b1 | a6b1  a5b1  a4b1  | a3b1  a2b1  a1b1  a0b1		 +
-	//								  a7b2  a6b2 | a5b2  a4b2  a3b2  | a2b2  a1b2  a0b2			 	 +
-	//						    a7b3  a6b3  a5b3 | a4b3  a3b3  a2b3  | a1b3  a0b3					 +
-	//					| a7b4  a6b4  a5b4  a4b4 | a3b4  a2b4  a1b4  | a0b4						 	 +
-	//			   a7b5 | a6b5  a5b5  a4b5  a3b5 | a2b5  a1b5  a0b5	 |							 	 +
-	// 		 a7b6  a6b6 | a5b6  a4b6  a3b6  a2b6 | a1b6  a0b6		 |							 	 +
-	// a7b7  a6b7  a5b7 | a4b7  a3b7  a2b7  a1b7 | a0b7				 |							 	 +
-	// ------------------------------------------------------------------------------------------
-	// r14	 r13   r12	| r11    r10   r9	 r8	 |  r7	  r6	 r5	 |  r4    r3	 r2	  r1	r0
-	//
-	// As we know, p = 2⁴⁴⁸ - 2²²⁴ - 1 and we have reduction identity,
-	// a * 2⁴⁴⁸ + b = a * (2²²⁴ + 1) + b
-	// a * 2⁴⁴⁸ + b = a * 2²²⁴ + a + b
-	//
-	// we can use this to reduce the limbs that would overflow 448 bits.
-	//  	r8  * 2⁴⁴⁸ 	=> r8 * 2²²⁴ * 2⁰ + r8 * 2⁰,
-	//		r9  * 2⁵⁰⁴ 	=> r9 * 2⁴⁴⁸ * 2⁵⁶   	=> r9 * 2²²⁴ * 2⁵⁶ + r9 * 2⁵⁶
-	// 		r10 * 2⁵⁶⁰ 	=> r10 * 2⁴⁴⁸ * 2¹¹²	=> r10 * 2²²⁴ * 2¹¹² + r10 * 2¹¹²
-	// 		... etc
-	// 		r12 * 2⁶⁷² 	=> r12 * 2⁴⁴⁸ + r12 * 2²²⁴
-	//   				=> r12 * 2²²⁴ + r12 + r12 * 2²²⁴
-	//   				=> 2 * r12 * 2²²⁴ + r12
-	//
-	// 			a7			a6	  			a5				| a4	  		  a3	a2	  		a1			a0
-	//			b7			b6	  			b5				| b4	  		  b3	b2	  		b1			b0	 		x
-	//			-----------------------------------------------------------------------------------------------------
-	//			a7b0  		a6b0  			a5b0 			| a4b0  	 	  a3b0  a2b0  		a1b0  		a0b0  		+
-	//			a6b1  		a5b1  			a4b1 			| a3b1+a7b1  	  a2b1  a1b1  		a0b1  		a7b1	 	+
-	//			a5b2  		a4b2  			a3b2+a7b2 		| a2b2+a6b2  	  a1b2  a0b2  		a7b2  		a6b2	 	+
-	//			a4b3  		a3b3+a7b3  		a2b3+a6b3		| a1b3+a5b3  	  a0b3  a7b3  		a6b3  		a5b3	 	+
-	//			a3b4+a7b4	a2b4+a6b4		a1b4+a5b4		| a0b4+a4b4	 	  a7b4  a6b4  		a5b4  		a4b4	 	+
-	//			a2b5+a6b5  	a1b5+a5b5		a0b5+a4b5		| a3b5+a7b5+a7b5  a6b5 	a5b5  		a4b5  		a3b5+a7b5	+
-	// 		 	a1b6+a5b6	a0b6+a4b6		a3b6+a7b6+a7b6 	| a2b6+a6b6+a6b6  a5b6  a4b6  	   	a3b6+a7b6 	a2b6+a6b6	+
-	// 			a0b7+a4b7	a3b7+a7b7+a7b7 	a2b7+a6b7+a6b7	| a1b7+a5b7+a5b7  a4b7	a3b7+a7b7	a2b7+a6b7	a1b7+a5b7
-	//			=========================================================================================================
-	//			t7			t6				t5				  t4			  t3	t2			t1			t0
-	//
-	// unoptimizead a * b
-	a0b0 := mult_64(x.el[0], y.el[0])
-	a1b0 := mult_64(x.el[1], y.el[0])
-	a2b0 := mult_64(x.el[2], y.el[0])
-	a3b0 := mult_64(x.el[3], y.el[0])
-	a4b0 := mult_64(x.el[4], y.el[0])
-	a5b0 := mult_64(x.el[5], y.el[0])
-	a6b0 := mult_64(x.el[6], y.el[0])
-	a7b0 := mult_64(x.el[7], y.el[0])
+fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
+	mut z0 := [7]unsigned.Uint128{}
+	mut z1 := [7]unsigned.Uint128{}
+	mut z2 := [7]unsigned.Uint128{}
 
-	a0b1 := mult_64(x.el[0], y.el[1])
-	a1b1 := mult_64(x.el[1], y.el[1])
-	a2b1 := mult_64(x.el[2], y.el[1])
-	a3b1 := mult_64(x.el[3], y.el[1])
-	a4b1 := mult_64(x.el[4], y.el[1])
-	a5b1 := mult_64(x.el[5], y.el[1])
-	a6b1 := mult_64(x.el[6], y.el[1])
-	a7b1 := mult_64(x.el[7], y.el[1])
+	mul_4limb_schoolbook(mut z0, x.el[0], x.el[1], x.el[2], x.el[3], y.el[0], y.el[1], y.el[2],
+		y.el[3])
+	mul_4limb_schoolbook(mut z2, x.el[4], x.el[5], x.el[6], x.el[7], y.el[4], y.el[5], y.el[6],
+		y.el[7])
 
-	a0b2 := mult_64(x.el[0], y.el[2])
-	a1b2 := mult_64(x.el[1], y.el[2])
-	a2b2 := mult_64(x.el[2], y.el[2])
-	a3b2 := mult_64(x.el[3], y.el[2])
-	a4b2 := mult_64(x.el[4], y.el[2])
-	a5b2 := mult_64(x.el[5], y.el[2])
-	a6b2 := mult_64(x.el[6], y.el[2])
-	a7b2 := mult_64(x.el[7], y.el[2])
-
-	a0b3 := mult_64(x.el[0], y.el[3])
-	a1b3 := mult_64(x.el[1], y.el[3])
-	a2b3 := mult_64(x.el[2], y.el[3])
-	a3b3 := mult_64(x.el[3], y.el[3])
-	a4b3 := mult_64(x.el[4], y.el[3])
-	a5b3 := mult_64(x.el[5], y.el[3])
-	a6b3 := mult_64(x.el[6], y.el[3])
-	a7b3 := mult_64(x.el[7], y.el[3])
-
-	a0b4 := mult_64(x.el[0], y.el[4])
-	a1b4 := mult_64(x.el[1], y.el[4])
-	a2b4 := mult_64(x.el[2], y.el[4])
-	a3b4 := mult_64(x.el[3], y.el[4])
-	a4b4 := mult_64(x.el[4], y.el[4])
-	a5b4 := mult_64(x.el[5], y.el[4])
-	a6b4 := mult_64(x.el[6], y.el[4])
-	a7b4 := mult_64(x.el[7], y.el[4])
-
-	a0b5 := mult_64(x.el[0], y.el[5])
-	a1b5 := mult_64(x.el[1], y.el[5])
-	a2b5 := mult_64(x.el[2], y.el[5])
-	a3b5 := mult_64(x.el[3], y.el[5])
-	a4b5 := mult_64(x.el[4], y.el[5])
-	a5b5 := mult_64(x.el[5], y.el[5])
-	a6b5 := mult_64(x.el[6], y.el[5])
-	a7b5 := mult_64(x.el[7], y.el[5])
-
-	a0b6 := mult_64(x.el[0], y.el[6])
-	a1b6 := mult_64(x.el[1], y.el[6])
-	a2b6 := mult_64(x.el[2], y.el[6])
-	a3b6 := mult_64(x.el[3], y.el[6])
-	a4b6 := mult_64(x.el[4], y.el[6])
-	a5b6 := mult_64(x.el[5], y.el[6])
-	a6b6 := mult_64(x.el[6], y.el[6])
-	a7b6 := mult_64(x.el[7], y.el[6])
-
-	a0b7 := mult_64(x.el[0], y.el[7])
-	a1b7 := mult_64(x.el[1], y.el[7])
-	a2b7 := mult_64(x.el[2], y.el[7])
-	a3b7 := mult_64(x.el[3], y.el[7])
-	a4b7 := mult_64(x.el[4], y.el[7])
-	a5b7 := mult_64(x.el[5], y.el[7])
-	a6b7 := mult_64(x.el[6], y.el[7])
-	a7b7 := mult_64(x.el[7], y.el[7])
-
-	// t0 = a0b0 + a7b1 + a6b2 + a5b3 + a4b4 + a3b5+a7b5 + a2b6+a6b6 + a1b7+a5b7
-	mut t0 := a0b0
-	t0 = add_128(t0, a7b1)
-	t0 = add_128(t0, a6b2)
-	t0 = add_128(t0, a5b3)
-	t0 = add_128(t0, a4b4)
-	t0 = add_128(t0, a3b5)
-	t0 = add_128(t0, a7b5)
-	t0 = add_128(t0, a2b6)
-	t0 = add_128(t0, a6b6)
-	t0 = add_128(t0, a1b7)
-	t0 = add_128(t0, a5b7)
-
-	// t1 = a1b0 + a0b1 + a7b2 + a6b3 + a5b4 + a4b5 + a3b6+a7b6 + a2b7+a6b7
-	mut t1 := a1b0
-	t1 = add_128(t1, a0b1)
-	t1 = add_128(t1, a7b2)
-	t1 = add_128(t1, a6b3)
-	t1 = add_128(t1, a5b4)
-	t1 = add_128(t1, a4b5)
-	t1 = add_128(t1, a3b6)
-	t1 = add_128(t1, a7b6)
-	t1 = add_128(t1, a2b7)
-	t1 = add_128(t1, a6b7)
-
-	// t2 = a2b0 + a1b1 + a0b2 + a7b3 + a6b4 + a5b5 + a4b6 + a3b7+a7b7
-	mut t2 := add_128(a2b0, a1b1)
-	t2 = add_128(t2, a0b2)
-	t2 = add_128(t2, a7b3)
-	t2 = add_128(t2, a6b4)
-	t2 = add_128(t2, a5b5)
-	t2 = add_128(t2, a4b6)
-	t2 = add_128(t2, a3b7)
-	t2 = add_128(t2, a7b7)
-
-	// t3 = a3b0 a2b1 a1b2 a0b3 a7b4 a6b5 a5b6 a4b7
-	mut t3 := add_128(a3b0, a2b1)
-	t3 = add_128(t3, a1b2)
-	t3 = add_128(t3, a0b3)
-	t3 = add_128(t3, a7b4)
-	t3 = add_128(t3, a6b5)
-	t3 = add_128(t3, a5b6)
-	t3 = add_128(t3, a4b7)
-
-	// t4 = a4b0 + a3b1+a7b1 + a2b2+a6b2 + a1b3+a5b3 + a0b4+a4b4 + a3b5+a7b5+a7b5 + a2b6+a6b6+a6b6 + a1b7+a5b7+a5b7
-	mut t4 := add_128(a4b0, a3b1)
-	t4 = add_128(t4, a7b1)
-	t4 = add_128(t4, a2b2)
-	t4 = add_128(t4, a6b2)
-	t4 = add_128(t4, a1b3)
-	t4 = add_128(t4, a5b3)
-	t4 = add_128(t4, a0b4)
-	t4 = add_128(t4, a4b4)
-	t4 = add_128(t4, a3b5)
-	// left shift
-	t4 = add_128(t4, lsh_128(a7b5))
-	t4 = add_128(t4, a2b6)
-	// left shift
-	t4 = add_128(t4, lsh_128(a6b6))
-	t4 = add_128(t4, a1b7)
-	// left shift
-	t4 = add_128(t4, lsh_128(a5b7))
-
-	// t5 = a5b0 + a4b1 + a3b2+a7b2 + a2b3+a6b3 + a1b4+a5b4 + a0b5+a4b5 + a3b6+a7b6+a7b6 + a2b7+a6b7+a6b7
-	mut t5 := add_128(a5b0, a4b1)
-	t5 = add_128(t5, a3b2)
-	t5 = add_128(t5, a7b2)
-	t5 = add_128(t5, a2b3)
-	t5 = add_128(t5, a6b3)
-	t5 = add_128(t5, a1b4)
-	t5 = add_128(t5, a5b4)
-	t5 = add_128(t5, a0b5)
-	t5 = add_128(t5, a4b5)
-	t5 = add_128(t5, a3b6)
-	// left shift
-	t5 = add_128(t5, lsh_128(a7b6))
-	t5 = add_128(t5, a2b7)
-	// left shift
-	t5 = add_128(t5, lsh_128(a6b7))
-
-	// t6 = a6b0 + a5b1 + a4b2 + a3b3+a7b3 + a2b4+a6b4 + a1b5+a5b5 + a0b6+a4b6 +a3b7+a7b7+a7b7
-	mut t6 := add_128(a6b0, a5b1)
-	t6 = add_128(t6, a4b2)
-	t6 = add_128(t6, a3b3)
-	t6 = add_128(t6, a7b3)
-	t6 = add_128(t6, a2b4)
-	t6 = add_128(t6, a6b4)
-	t6 = add_128(t6, a1b5)
-	t6 = add_128(t6, a5b5)
-	t6 = add_128(t6, a0b6)
-	t6 = add_128(t6, a4b6)
-	t6 = add_128(t6, a3b7)
-	// left shift
-	t6 = add_128(t6, lsh_128(a7b7))
-
-	// t7 = a7b0 + a6b1 + a5b2 + a4b3 + a3b4+a7b4 + a2b5+a6b5 + a1b6+a5b6 + a0b7+a4b7
-	mut t7 := add_128(a7b0, a6b1)
-	t7 = add_128(t7, a5b2)
-	t7 = add_128(t7, a4b3)
-	t7 = add_128(t7, a3b4)
-	t7 = add_128(t7, a7b4)
-	t7 = add_128(t7, a2b5)
-	t7 = add_128(t7, a6b5)
-	t7 = add_128(t7, a1b6)
-	t7 = add_128(t7, a5b6)
-	t7 = add_128(t7, a0b7)
-	t7 = add_128(t7, a4b7)
+	x01_0 := x.el[0] + x.el[4]
+	x01_1 := x.el[1] + x.el[5]
+	x01_2 := x.el[2] + x.el[6]
+	x01_3 := x.el[3] + x.el[7]
+	y01_0 := y.el[0] + y.el[4]
+	y01_1 := y.el[1] + y.el[5]
+	y01_2 := y.el[2] + y.el[6]
+	y01_3 := y.el[3] + y.el[7]
+	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
 
 	// apply reduction
-	mut c0 := shift_right_by56(mut t0)
-	mut c1 := shift_right_by56(mut t1)
-	mut c2 := shift_right_by56(mut t2)
-	mut c3 := shift_right_by56(mut t3)
-	mut c4 := shift_right_by56(mut t4)
-	mut c5 := shift_right_by56(mut t5)
-	mut c6 := shift_right_by56(mut t6)
-	mut c7 := shift_right_by56(mut t7)
+	for i := 0; i < 7; i++ {
+		z1[i] = sub_128(sub_128(z1[i], z0[i]), z2[i])
+	}
 
-	z.el[0] = (t0.lo & fe_masklow_56bits) + c7
-	z.el[1] = (t1.lo & fe_masklow_56bits) + c0
-	z.el[2] = (t2.lo & fe_masklow_56bits) + c1
-	z.el[3] = (t3.lo & fe_masklow_56bits) + c2
-	z.el[4] = (t4.lo & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (t5.lo & fe_masklow_56bits) + c4
-	z.el[6] = (t6.lo & fe_masklow_56bits) + c5
-	z.el[7] = (t7.lo & fe_masklow_56bits) + c6
+	mut r := [15]unsigned.Uint128{}
+	for i := 0; i < 7; i++ {
+		r[i] = add_128(r[i], z0[i])
+		r[i + 4] = add_128(r[i + 4], z1[i])
+		r[i + 8] = add_128(r[i + 8], z2[i])
+	}
 
-	// If there are carries generated, apply reduction step once more
-	c0 = z.el[0] >> fe_limb_size
-	c1 = z.el[1] >> fe_limb_size
-	c2 = z.el[2] >> fe_limb_size
-	c3 = z.el[3] >> fe_limb_size
-	c4 = z.el[4] >> fe_limb_size
-	c5 = z.el[5] >> fe_limb_size
-	c6 = z.el[6] >> fe_limb_size
-	c7 = z.el[7] >> fe_limb_size
+	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
+	mut t0 := add_128(r[0], r[8])
+	t0 = add_128(t0, r[12])
+	mut t1 := add_128(r[1], r[9])
+	t1 = add_128(t1, r[13])
+	mut t2 := add_128(r[2], r[10])
+	t2 = add_128(t2, r[14])
+	mut t3 := add_128(r[3], r[11])
+	mut t4 := add_128(r[4], r[8])
+	t4 = add_128(t4, lsh_128(r[12]))
+	mut t5 := add_128(r[5], r[9])
+	t5 = add_128(t5, lsh_128(r[13]))
+	mut t6 := add_128(r[6], r[10])
+	t6 = add_128(t6, lsh_128(r[14]))
+	mut t7 := add_128(r[7], r[11])
 
-	z.el[0] = (z.el[0] & fe_masklow_56bits) + c7
-	z.el[1] = (z.el[1] & fe_masklow_56bits) + c0
-	z.el[2] = (z.el[2] & fe_masklow_56bits) + c1
-	z.el[3] = (z.el[3] & fe_masklow_56bits) + c2
-	z.el[4] = (z.el[4] & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
-	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
-	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
+	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+
+	// Avoid leaving secret-dependent intermediates in these reusable stack slots.
+	clear_uint128x7(mut z0)
+	clear_uint128x7(mut z1)
+	clear_uint128x7(mut z2)
+	clear_uint128x15(mut r)
 }
 
 // square squares a field, ie, z = a*a (mod p)
 @[direct_array_access; inline]
 pub fn fe_sqr(mut z Field, a Field) {
-	fe_sqr_generic(mut z, a)
-}
-
-// fe_sqr_generic squares the field with generic way
-@[direct_array_access; inline]
-fn fe_sqr_generic(mut z Field, a Field) {
-	// squaring works similar  with multiplication, but have special symmetric properties internally
-	// between two's field multiplication, so its reduces calculation complexities
-	// 											  a7	a6	  a5	| a4	  a3	a2	  a1	a0
-	//											  a7	a6	  a5	| a4	  a3	a2	  a1	a0	 x
-	//											  ------------------------------------------------
-	//								  			 | a7a0  a6a0  a5a0  | a4a0  a3a0  a2a0  a1a0  a0a0   +
-	//									    a7a1 | a6a1  a5a1  a4a1  | a3a1  a2a1  a1a1  a0a1		 +
-	//								  a7a2  a6a2 | a5a2  a4a2  a3a2  | a2a2  a1a2  a0a2			 	 +
-	//						    a7a3  a6a3  a5a3 | a4a3  a3a3  a2a3  | a1a3  a0a3					 +
-	//					| a7a4  a6a4  a5a4  a4a4 | a3a4  a2a4  a1a4  | a0a4						 	 +
-	//			   a7a5 | a6a5  a5a5  a4a5  a3a5 | a2a5  a1a5  a0a5	 |							 	 +
-	// 		 a7a6  a6a6 | a5a6  a4a6  a3a6  a2a6 | a1a6  a0a6		 |							 	 +
-	// a7a7  a6a7  a5a7 | a4a7  a3a7  a2a7  a1a7 | a0a7				 |							 	 +
-	// ------------------------------------------------------------------------------------------
-	// r14	 r13   r12	| r11    r10   r9	 r8	 |  r7	  r6	 r5	 |  r4    r3	 r2	  r1	r0
-	// -----------------------------------------------------------------------------------------------------
-	// a7a0  		a6a0  			a5a0 			| a4a0  	 	  a3a0  a2a0  		a1a0  		a0a0  		+
-	// a6a1  		a5a1  			a4a1 			| a3a1+a7a1  	  a2a1  a1a1  		a0a1  		a7a1	 	+
-	// a5a2  		a4a2  			a3a2+a7a2 		| a2a2+a6a2  	  a1a2  a0a2  		a7a2  		a6a2	 	+
-	// a4a3  		a3a3+a7a3  		a2a3+a6a3		| a1a3+a5a3  	  a0a3  a7a3  		a6a3  		a5a3	 	+
-	// a3a4+a7a4	a2a4+a6a4		a1a4+a5a4		| a0a4+a4a4	 	  a7a4  a6a4  		a5a4  		a4a4	 	+
-	// a2a5+a6a5  	a1a5+a5a5		a0a5+a4a5		| a3a5+a7a5+a7a5  a6a5 	a5a5  		a4a5  		a3a5+a7a5	+
-	// a1a6+a5a6	a0a6+a4a6		a3a6+a7a6+a7a6 	| a2a6+a6a6+a6a6  a5a6  a4a6  	   	a3a6+a7a6 	a2a6+a6a6	+
-	// a0a7+a4a7	a3a7+a7a7+a7a7 	a2a7+a6a7+a6a7	| a1a7+a5a7+a5a7  a4a7	a3a7+a7a7	a2a7+a6a7	a1a7+a5a7
-	// =========================================================================================================
-	// t7			t6				t5				  t4			  t3	t2			t1			t0
-	//
-	// unoptimizead a * a
-	// we have properties for symmetric field, aᵢ.aⱼ = aⱼ.aᵢ
-	// so, we dont have need to recalculate some field products.
-	a0a0 := mult_64(a.el[0], a.el[0])
-	a1a0 := mult_64(a.el[1], a.el[0]) // = a0a1
-	a2a0 := mult_64(a.el[2], a.el[0]) // = a0a2
-	a3a0 := mult_64(a.el[3], a.el[0]) // = a0a3
-	a4a0 := mult_64(a.el[4], a.el[0]) // = a0a4
-	a5a0 := mult_64(a.el[5], a.el[0]) // = a0a5
-	a6a0 := mult_64(a.el[6], a.el[0]) // = a0a6
-	a7a0 := mult_64(a.el[7], a.el[0]) // = a0a7
-
-	a1a1 := mult_64(a.el[1], a.el[1])
-	a2a1 := mult_64(a.el[2], a.el[1])
-	a3a1 := mult_64(a.el[3], a.el[1])
-	a4a1 := mult_64(a.el[4], a.el[1])
-	a5a1 := mult_64(a.el[5], a.el[1])
-	a6a1 := mult_64(a.el[6], a.el[1])
-	a7a1 := mult_64(a.el[7], a.el[1])
-
-	a2a2 := mult_64(a.el[2], a.el[2])
-	a3a2 := mult_64(a.el[3], a.el[2])
-	a4a2 := mult_64(a.el[4], a.el[2])
-	a5a2 := mult_64(a.el[5], a.el[2])
-	a6a2 := mult_64(a.el[6], a.el[2])
-	a7a2 := mult_64(a.el[7], a.el[2])
-
-	a3a3 := mult_64(a.el[3], a.el[3])
-	a4a3 := mult_64(a.el[4], a.el[3])
-	a5a3 := mult_64(a.el[5], a.el[3])
-	a6a3 := mult_64(a.el[6], a.el[3])
-	a7a3 := mult_64(a.el[7], a.el[3])
-
-	a4a4 := mult_64(a.el[4], a.el[4])
-	a5a4 := mult_64(a.el[5], a.el[4])
-	a6a4 := mult_64(a.el[6], a.el[4])
-	a7a4 := mult_64(a.el[7], a.el[4])
-
-	a5a5 := mult_64(a.el[5], a.el[5])
-	a6a5 := mult_64(a.el[6], a.el[5])
-	a7a5 := mult_64(a.el[7], a.el[5])
-
-	a6a6 := mult_64(a.el[6], a.el[6])
-	a7a6 := mult_64(a.el[7], a.el[6])
-
-	a7a7 := mult_64(a.el[7], a.el[7])
-
-	// t0 = a0a0 + a4a4 + a6a6 + (a7a1+a1a7) + (a6a2+ a2a6) + (a5a3+ a3a5)  + (a5a7+a7a5)
-	mut t0 := add_128(a0a0, a4a4)
-	t0 = add_128(t0, a6a6)
-	t0 = add_128(t0, lsh_128(a7a1))
-	t0 = add_128(t0, lsh_128(a6a2))
-	t0 = add_128(t0, lsh_128(a5a3))
-	t0 = add_128(t0, lsh_128(a7a5))
-
-	// t1 = (a1a0 + a0a1) + (a7a2+ a2a7) + (a6a3+ a3a6) + (a5a4 + a4a5) + (a7a6 +a6a7)
-	mut t1 := lsh_128(a1a0)
-	t1 = add_128(t1, lsh_128(a7a2))
-	t1 = add_128(t1, lsh_128(a6a3))
-	t1 = add_128(t1, lsh_128(a5a4))
-	t1 = add_128(t1, lsh_128(a7a6))
-
-	// t2 = a1a1 + a5a5 + a7a7 + (a2a0+ a0a2) + (a7a3+ a3a7) + (a6a4+ a4a6)
-	mut t2 := add_128(a1a1, a5a5)
-	t2 = add_128(t2, a7a7)
-	t2 = add_128(t2, lsh_128(a2a0))
-	t2 = add_128(t2, lsh_128(a7a3))
-	t2 = add_128(t2, lsh_128(a6a4))
-
-	// t3 = (a3a0+ a0a3) + (a2a1+a1a2) + (a7a4+ a4a7) + (a6a5 + a5a6)
-	mut t3 := lsh_128(a3a0)
-	t3 = add_128(t3, lsh_128(a2a1))
-	t3 = add_128(t3, lsh_128(a7a4))
-	t3 = add_128(t3, lsh_128(a6a5))
-
-	// t4 = a2a2 + a4a4 + (a4a0+a0a4) + (a3a1+a1a3) + (a7a1+a1a7) + (a2a6+a6a2) + (a5a3+a3a5)  + (a7a5+a7a5+a5a7+a5a7) + (a6a6+a6a6)
-	mut t4 := add_128(a2a2, a4a4)
-	t4 = add_128(t4, lsh_128(a4a0))
-	t4 = add_128(t4, lsh_128(a3a1))
-	t4 = add_128(t4, lsh_128(a7a1))
-	t4 = add_128(t4, lsh_128(a6a2))
-	t4 = add_128(t4, lsh_128(a5a3))
-	t4 = add_128(t4, lsh_256(a7a5))
-	t4 = add_128(t4, lsh_128(a6a6))
-
-	// t5 = (a5a0+a0a5) + (a4a1+a1a4) + (a3a2+a2a3) + (a7a2+a2a7) + (a6a3 + a3a6) + (a5a4+a4a5) + (a7a6+a7a6+a6a7+a6a7)
-	mut t5 := lsh_128(a5a0)
-	t5 = add_128(t5, lsh_128(a4a1))
-	t5 = add_128(t5, lsh_128(a3a2))
-	t5 = add_128(t5, lsh_128(a7a2))
-	t5 = add_128(t5, lsh_128(a6a3))
-	t5 = add_128(t5, lsh_128(a5a4))
-	t5 = add_128(t5, lsh_256(a7a6))
-
-	// t6 = a3a3 + a5a5 + (a6a0+a0a6) + (a5a1+a1a5) + (a4a2+a2a4) + (a7a3+a3a7) + (a6a4+a4a6) + (a7a7+a7a7)
-	mut t6 := add_128(a3a3, a5a5)
-	t6 = add_128(t6, lsh_128(a6a0))
-	t6 = add_128(t6, lsh_128(a5a1))
-	t6 = add_128(t6, lsh_128(a4a2))
-	t6 = add_128(t6, lsh_128(a7a3))
-	t6 = add_128(t6, lsh_128(a6a4))
-	t6 = add_128(t6, lsh_128(a7a7))
-
-	// t7 = (a7a0+a0a7) + (a6a1+a1a6) + (a5a2+a2a5) + (a4a3+a3a4) + (a7a4+a4a7) + (a6a5+a5a6)
-	mut t7 := lsh_128(a7a0)
-	t7 = add_128(t7, lsh_128(a6a1))
-	t7 = add_128(t7, lsh_128(a5a2))
-	t7 = add_128(t7, lsh_128(a4a3))
-	t7 = add_128(t7, lsh_128(a7a4))
-	t7 = add_128(t7, lsh_128(a6a5))
-
-	// apply reduction
-	mut c0 := shift_right_by56(mut t0)
-	mut c1 := shift_right_by56(mut t1)
-	mut c2 := shift_right_by56(mut t2)
-	mut c3 := shift_right_by56(mut t3)
-	mut c4 := shift_right_by56(mut t4)
-	mut c5 := shift_right_by56(mut t5)
-	mut c6 := shift_right_by56(mut t6)
-	mut c7 := shift_right_by56(mut t7)
-
-	z.el[0] = (t0.lo & fe_masklow_56bits) + c7
-	z.el[1] = (t1.lo & fe_masklow_56bits) + c0
-	z.el[2] = (t2.lo & fe_masklow_56bits) + c1
-	z.el[3] = (t3.lo & fe_masklow_56bits) + c2
-	z.el[4] = (t4.lo & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (t5.lo & fe_masklow_56bits) + c4
-	z.el[6] = (t6.lo & fe_masklow_56bits) + c5
-	z.el[7] = (t7.lo & fe_masklow_56bits) + c6
-
-	// If there are carries generated, apply reduction step once more
-	c0 = z.el[0] >> fe_limb_size
-	c1 = z.el[1] >> fe_limb_size
-	c2 = z.el[2] >> fe_limb_size
-	c3 = z.el[3] >> fe_limb_size
-	c4 = z.el[4] >> fe_limb_size
-	c5 = z.el[5] >> fe_limb_size
-	c6 = z.el[6] >> fe_limb_size
-	c7 = z.el[7] >> fe_limb_size
-
-	z.el[0] = (z.el[0] & fe_masklow_56bits) + c7
-	z.el[1] = (z.el[1] & fe_masklow_56bits) + c0
-	z.el[2] = (z.el[2] & fe_masklow_56bits) + c1
-	z.el[3] = (z.el[3] & fe_masklow_56bits) + c2
-	z.el[4] = (z.el[4] & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
-	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
-	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
+	fe_mult_karatsuba(mut z, a, a)
 }
 
 // fe_mult_32 multiplies x with u32 (mod p)
@@ -957,7 +598,7 @@ fn mask_64bits(cond int) u64 {
 	return u64(0) - u64(cond)
 }
 
-// shift_right_by56 returns a >> 56. a is assumed to be at most 117 bits.
+// shift_right_by56 returns a >> 56. a is assumed to be below 128 bits.
 @[inline]
 fn shift_right_by56(mut a unsigned.Uint128) u64 {
 	return (a.hi << 8) | (a.lo >> 56)
@@ -1056,84 +697,6 @@ fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Ui
 	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
 	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
 	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
-}
-
-// fe_mult_karatsuba multiplies two field elements using a two-way Karatsuba split.
-//
-// The input is split into low and high 224-bit halves, each containing four
-// 56-bit limbs:
-//
-//     x = x0 + x1*B⁴,  y = y0 + y1*B⁴,  B = 2⁵⁶
-//
-// Karatsuba computes the unreduced product with three 4-limb products instead
-// of four:
-//
-//     z0 = x0*y0
-//     z2 = x1*y1
-//     z1 = (x0+x1)*(y0+y1) - z0 - z2
-//     x*y = z0 + z1*B⁴ + z2*B⁸
-//
-// The resulting 15 polynomial limbs are then folded modulo
-// p = 2⁴⁴⁸ - 2²²⁴ - 1 by B⁸ = B⁴ + 1. Terms at B⁸..B¹⁴ are first folded to
-// positions i-8 and i-4; terms that land at B⁸..B¹⁰ from the first fold are
-// folded once more. All arithmetic stays below 128 bits: the largest product
-// term is a sum of a handful of 57-bit-by-57-bit products.
-@[direct_array_access; inline]
-fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
-	mut z0 := [7]unsigned.Uint128{}
-	mut z1 := [7]unsigned.Uint128{}
-	mut z2 := [7]unsigned.Uint128{}
-
-	mul_4limb_schoolbook(mut z0, x.el[0], x.el[1], x.el[2], x.el[3], y.el[0], y.el[1], y.el[2],
-		y.el[3])
-	mul_4limb_schoolbook(mut z2, x.el[4], x.el[5], x.el[6], x.el[7], y.el[4], y.el[5], y.el[6],
-		y.el[7])
-
-	x01_0 := x.el[0] + x.el[4]
-	x01_1 := x.el[1] + x.el[5]
-	x01_2 := x.el[2] + x.el[6]
-	x01_3 := x.el[3] + x.el[7]
-	y01_0 := y.el[0] + y.el[4]
-	y01_1 := y.el[1] + y.el[5]
-	y01_2 := y.el[2] + y.el[6]
-	y01_3 := y.el[3] + y.el[7]
-	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
-
-	// apply reduction
-	for i := 0; i < 7; i++ {
-		z1[i] = sub_128(sub_128(z1[i], z0[i]), z2[i])
-	}
-
-	mut r := [15]unsigned.Uint128{}
-	for i := 0; i < 7; i++ {
-		r[i] = add_128(r[i], z0[i])
-		r[i + 4] = add_128(r[i + 4], z1[i])
-		r[i + 8] = add_128(r[i + 8], z2[i])
-	}
-
-	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
-	mut t0 := add_128(r[0], r[8])
-	t0 = add_128(t0, r[12])
-	mut t1 := add_128(r[1], r[9])
-	t1 = add_128(t1, r[13])
-	mut t2 := add_128(r[2], r[10])
-	t2 = add_128(t2, r[14])
-	mut t3 := add_128(r[3], r[11])
-	mut t4 := add_128(r[4], r[8])
-	t4 = add_128(t4, lsh_128(r[12]))
-	mut t5 := add_128(r[5], r[9])
-	t5 = add_128(t5, lsh_128(r[13]))
-	mut t6 := add_128(r[6], r[10])
-	t6 = add_128(t6, lsh_128(r[14]))
-	mut t7 := add_128(r[7], r[11])
-
-	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
-
-	// Avoid leaving secret-dependent intermediates in these reusable stack slots.
-	clear_uint128x7(mut z0)
-	clear_uint128x7(mut z1)
-	clear_uint128x7(mut z2)
-	clear_uint128x15(mut r)
 }
 
 @[direct_array_access; inline]

@@ -114,7 +114,25 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	fp448.fe_inverse(mut ret, z2)
 	fp448.fe_mult(mut ret, x2, ret)
 	if fp448.fe_cmp(ret, fp448.fe_zero) == 1 {
+		// Cleaning up temporary variables, its contains sensitive data
+		fp448.fe_clear(mut x1)
+		fp448.fe_clear(mut x2)
+		fp448.fe_clear(mut z2)
+		fp448.fe_clear(mut x3)
+		fp448.fe_clear(mut z3)
+		fp448.fe_clear(mut a)
+		fp448.fe_clear(mut aa)
+		fp448.fe_clear(mut b)
+		fp448.fe_clear(mut bb)
+		fp448.fe_clear(mut e)
+		fp448.fe_clear(mut c)
+		fp448.fe_clear(mut d)
+		fp448.fe_clear(mut da)
+		fp448.fe_clear(mut cb)
+		fp448.fe_clear(mut ret)
 		return error('x448 bad input point: low order point')
 	}
-	return ret.bytes()
+	out := ret.bytes()
+	// TODO: cleaning up temporary variables
+	return out
 }
