@@ -64,43 +64,43 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	for t := 447; t >= 0; t-- {
 		// Extract the t-th bit of the scalar s.
 		kt := int(s[t / 8] >> (t % 8)) & 1
-		
+
 		// Determine if we need to swap the coordinate pairs based on the scalar bit.
 		swap ^= kt
-		
+
 		// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
 		// if swap is 1. This implements the CSWAP step of the ladder.
 		fp448.fe_cswap(mut x2, mut x3, swap)
 		fp448.fe_cswap(mut z2, mut z3, swap)
-		
+
 		// Update swap flag for the next iteration.
 		swap = kt
 
 		// Step 4.1: Compute intermediate values for differential addition and doubling.
-		fp448.fe_add(mut a, x2, z2)        // A = x_2 + z_2
-		fp448.fe_sqr(mut aa, a)            // AA = A^2
-		fp448.fe_sub(mut b, x2, z2)        // B = x_2 - z_2
-		fp448.fe_sqr(mut bb, b)            // BB = B^2
-		fp448.fe_sub(mut e, aa, bb)        // E = AA - BB (this represents the difference)
-		
-		fp448.fe_add(mut c, x3, z3)        // C = x_3 + z_3
-		fp448.fe_sub(mut d, x3, z3)        // D = x_3 - z_3
-		fp448.fe_mult(mut da, d, a)        // DA = D * A
-		fp448.fe_mult(mut cb, c, b)        // CB = C * B
+		fp448.fe_add(mut a, x2, z2) // A = x_2 + z_2
+		fp448.fe_sqr(mut aa, a) // AA = A^2
+		fp448.fe_sub(mut b, x2, z2) // B = x_2 - z_2
+		fp448.fe_sqr(mut bb, b) // BB = B^2
+		fp448.fe_sub(mut e, aa, bb) // E = AA - BB (this represents the difference)
+
+		fp448.fe_add(mut c, x3, z3) // C = x_3 + z_3
+		fp448.fe_sub(mut d, x3, z3) // D = x_3 - z_3
+		fp448.fe_mult(mut da, d, a) // DA = D * A
+		fp448.fe_mult(mut cb, c, b) // CB = C * B
 
 		// Step 4.2: Perform Point Addition to update (x3, z3)
-		fp448.fe_add(mut x3, da, cb)       // x_3 = (DA + CB)^2
+		fp448.fe_add(mut x3, da, cb) // x_3 = (DA + CB)^2
 		fp448.fe_sqr(mut x3, x3)
 
-		fp448.fe_sub(mut z3, da, cb)       // z_3 = x_1 * (DA - CB)^2
+		fp448.fe_sub(mut z3, da, cb) // z_3 = x_1 * (DA - CB)^2
 		fp448.fe_sqr(mut z3, z3)
 		fp448.fe_mult(mut z3, z3, x1)
 
 		// Step 4.3: Perform Point Doubling to update (x2, z2)
-		fp448.fe_mult(mut x2, aa, bb)      // x_2 = AA * BB
+		fp448.fe_mult(mut x2, aa, bb) // x_2 = AA * BB
 
 		// z_2 = E * (AA + a24 * E) where a24 = 39081 for Curve448
-		fp448.fe_mult_32(mut z2, e, 39081) 
+		fp448.fe_mult_32(mut z2, e, 39081)
 		fp448.fe_add(mut z2, z2, aa)
 		fp448.fe_mult(mut z2, z2, e)
 	}

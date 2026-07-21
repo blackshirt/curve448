@@ -171,7 +171,8 @@ pub fn fe_clone(mut z Field, x Field) {
 // TODO: optimize it with some well-known algorithm
 @[direct_array_access]
 pub fn fe_mult(mut z Field, x Field, y Field) {
-	fe_mult_generic(mut z, x, y)
+	// fe_mult_generic(mut z, x, y)
+	fe_mult_karatsuba(mut z, x, y)
 }
 
 // fe_mult_generic is a general and unoptimized schoolbook field multiplication
@@ -994,4 +995,135 @@ fn mult_56(a u64, b u32) (u64, u64) {
 	lo := ll & fe_masklow_56bits
 	hi := (hh << 8) | (ll >> fe_limb_size)
 	return lo, hi
+}
+
+// sub_128 subtracts b from a. Callers only use it when a >= b.
+@[inline]
+fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
+	lo, borrow := bits.sub_64(a.lo, b.lo, 0)
+	hi, _ := bits.sub_64(a.hi, b.hi, borrow)
+	return unsigned.uint128_new(lo, hi)
+}
+
+@[direct_array_access; inline]
+fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
+	x := [x0, x1, x2, x3]!
+	y := [y0, y1, y2, y3]!
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
+		}
+	}
+}
+
+@[direct_array_access; inline]
+fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
+	mut c0 := shift_right_by56(mut t0)
+	mut c1 := shift_right_by56(mut t1)
+	mut c2 := shift_right_by56(mut t2)
+	mut c3 := shift_right_by56(mut t3)
+	mut c4 := shift_right_by56(mut t4)
+	mut c5 := shift_right_by56(mut t5)
+	mut c6 := shift_right_by56(mut t6)
+	mut c7 := shift_right_by56(mut t7)
+
+	z.el[0] = (t0.lo & fe_masklow_56bits) + c7
+	z.el[1] = (t1.lo & fe_masklow_56bits) + c0
+	z.el[2] = (t2.lo & fe_masklow_56bits) + c1
+	z.el[3] = (t3.lo & fe_masklow_56bits) + c2
+	z.el[4] = (t4.lo & fe_masklow_56bits) + c3 + c7
+	z.el[5] = (t5.lo & fe_masklow_56bits) + c4
+	z.el[6] = (t6.lo & fe_masklow_56bits) + c5
+	z.el[7] = (t7.lo & fe_masklow_56bits) + c6
+
+	// If there are carries generated, apply reduction step once more
+	c0 = z.el[0] >> fe_limb_size
+	c1 = z.el[1] >> fe_limb_size
+	c2 = z.el[2] >> fe_limb_size
+	c3 = z.el[3] >> fe_limb_size
+	c4 = z.el[4] >> fe_limb_size
+	c5 = z.el[5] >> fe_limb_size
+	c6 = z.el[6] >> fe_limb_size
+	c7 = z.el[7] >> fe_limb_size
+
+	z.el[0] = (z.el[0] & fe_masklow_56bits) + c7
+	z.el[1] = (z.el[1] & fe_masklow_56bits) + c0
+	z.el[2] = (z.el[2] & fe_masklow_56bits) + c1
+	z.el[3] = (z.el[3] & fe_masklow_56bits) + c2
+	z.el[4] = (z.el[4] & fe_masklow_56bits) + c3 + c7
+	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
+	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
+	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
+}
+
+// fe_mult_generic multiplies two field elements using a two-way Karatsuba split.
+//
+// The input is split into low and high 224-bit halves, each containing four
+// 56-bit limbs:
+//
+//     x = x0 + x1*B⁴,  y = y0 + y1*B⁴,  B = 2⁵⁶
+//
+// Karatsuba computes the unreduced product with three 4-limb products instead
+// of four:
+//
+//     z0 = x0*y0
+//     z2 = x1*y1
+//     z1 = (x0+x1)*(y0+y1) - z0 - z2
+//     x*y = z0 + z1*B⁴ + z2*B⁸
+//
+// The resulting 15 polynomial limbs are then folded modulo
+// p = 2⁴⁴⁸ - 2²²⁴ - 1 by B⁸ = B⁴ + 1. Terms at B⁸..B¹⁴ are first folded to
+// positions i-8 and i-4; terms that land at B⁸..B¹⁰ from the first fold are
+// folded once more. All arithmetic stays below 128 bits: the largest product
+// term is a sum of a handful of 57-bit-by-57-bit products.
+@[direct_array_access; inline]
+fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
+	mut z0 := [7]unsigned.Uint128{}
+	mut z1 := [7]unsigned.Uint128{}
+	mut z2 := [7]unsigned.Uint128{}
+
+	mul_4limb_schoolbook(mut z0, x.el[0], x.el[1], x.el[2], x.el[3], y.el[0], y.el[1], y.el[2],
+		y.el[3])
+	mul_4limb_schoolbook(mut z2, x.el[4], x.el[5], x.el[6], x.el[7], y.el[4], y.el[5], y.el[6],
+		y.el[7])
+
+	x01_0 := x.el[0] + x.el[4]
+	x01_1 := x.el[1] + x.el[5]
+	x01_2 := x.el[2] + x.el[6]
+	x01_3 := x.el[3] + x.el[7]
+	y01_0 := y.el[0] + y.el[4]
+	y01_1 := y.el[1] + y.el[5]
+	y01_2 := y.el[2] + y.el[6]
+	y01_3 := y.el[3] + y.el[7]
+	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
+
+	// apply reduction
+	for i := 0; i < 7; i++ {
+		z1[i] = sub_128(sub_128(z1[i], z0[i]), z2[i])
+	}
+
+	mut r := [15]unsigned.Uint128{}
+	for i := 0; i < 7; i++ {
+		r[i] = add_128(r[i], z0[i])
+		r[i + 4] = add_128(r[i + 4], z1[i])
+		r[i + 8] = add_128(r[i + 8], z2[i])
+	}
+
+	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
+	mut t0 := add_128(r[0], r[8])
+	t0 = add_128(t0, r[12])
+	mut t1 := add_128(r[1], r[9])
+	t1 = add_128(t1, r[13])
+	mut t2 := add_128(r[2], r[10])
+	t2 = add_128(t2, r[14])
+	mut t3 := add_128(r[3], r[11])
+	mut t4 := add_128(r[4], r[8])
+	t4 = add_128(t4, lsh_128(r[12]))
+	mut t5 := add_128(r[5], r[9])
+	t5 = add_128(t5, lsh_128(r[13]))
+	mut t6 := add_128(r[6], r[10])
+	t6 = add_128(t6, lsh_128(r[14]))
+	mut t7 := add_128(r[7], r[11])
+
+	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
 }
