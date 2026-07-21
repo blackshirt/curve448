@@ -21,8 +21,8 @@ import internal.fp448
 // low-order curve point.
 //
 // See [RFC 7748]: https://datatracker.ietf.org/doc/html/rfc7748
-// Notes: scalar marked as mutable for performance reason
-pub fn x448(mut scalar []u8, point []u8) ![]u8 {
+// Notes: scalar is cloned internally to avoid side-effects (mutating key in memory)
+pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if scalar.len != 56 {
 		return error('x448: bad scalar length')
 	}
@@ -37,8 +37,9 @@ pub fn x448(mut scalar []u8, point []u8) ![]u8 {
 	// used for the multiplication is a multiple of 4, at least 2⁴⁴⁷, and lower than
 	// 2⁴⁴⁸; the two least significant bits of the first byte, and the
 	// most significant bit of the last byte, are ignored.
-	scalar[0] &= 252
-	scalar[55] |= 128
+	mut s := scalar.clone()
+	s[0] &= 252
+	s[55] |= 128
 
 	mut u := fp448.new_field()
 	u.set_bytes(point)
@@ -58,34 +59,48 @@ pub fn x448(mut scalar []u8, point []u8) ![]u8 {
 	mut e, mut c, mut d := fp448.new_field(), fp448.new_field(), fp448.new_field()
 	mut da, mut cb := fp448.new_field(), fp448.new_field()
 
+	// Step 4: The Montgomery ladder loop.
+	// We iterate bit-by-bit through the 448-bit scalar from the MSB (bit 447) to the LSB (bit 0).
 	for t := 447; t >= 0; t-- {
-		kt := int(scalar[t / 8] >> (t % 8)) & 1
+		// Extract the t-th bit of the scalar s.
+		kt := int(s[t / 8] >> (t % 8)) & 1
+		
+		// Determine if we need to swap the coordinate pairs based on the scalar bit.
 		swap ^= kt
-		// conditional swap
-		fp448.fe_cswap(mut x2, mut x3, swap) //
+		
+		// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
+		// if swap is 1. This implements the CSWAP step of the ladder.
+		fp448.fe_cswap(mut x2, mut x3, swap)
 		fp448.fe_cswap(mut z2, mut z3, swap)
+		
+		// Update swap flag for the next iteration.
 		swap = kt
 
-		fp448.fe_add(mut a, x2, z2) // A = x₂ + z₂
-		fp448.fe_sqr(mut aa, a) // AA = A²
-		fp448.fe_sub(mut b, x2, z2) // B = x₂ - z₂
-		fp448.fe_sqr(mut bb, b) // BB = B²
-		fp448.fe_sub(mut e, aa, bb) // E = AA - BB
-		fp448.fe_add(mut c, x3, z3) // C = x₃ + z₃
-		fp448.fe_sub(mut d, x3, z3) // D = x₃ - z₃
-		fp448.fe_mult(mut da, d, a) // DA = D * A
-		fp448.fe_mult(mut cb, c, b) // CB = C * B
+		// Step 4.1: Compute intermediate values for differential addition and doubling.
+		fp448.fe_add(mut a, x2, z2)        // A = x_2 + z_2
+		fp448.fe_sqr(mut aa, a)            // AA = A^2
+		fp448.fe_sub(mut b, x2, z2)        // B = x_2 - z_2
+		fp448.fe_sqr(mut bb, b)            // BB = B^2
+		fp448.fe_sub(mut e, aa, bb)        // E = AA - BB (this represents the difference)
+		
+		fp448.fe_add(mut c, x3, z3)        // C = x_3 + z_3
+		fp448.fe_sub(mut d, x3, z3)        // D = x_3 - z_3
+		fp448.fe_mult(mut da, d, a)        // DA = D * A
+		fp448.fe_mult(mut cb, c, b)        // CB = C * B
 
-		fp448.fe_add(mut x3, da, cb) // x₃ = (DA + CB)²
+		// Step 4.2: Perform Point Addition to update (x3, z3)
+		fp448.fe_add(mut x3, da, cb)       // x_3 = (DA + CB)^2
 		fp448.fe_sqr(mut x3, x3)
 
-		fp448.fe_sub(mut z3, da, cb) // z₃ = x₁ * (DA - CB)²
+		fp448.fe_sub(mut z3, da, cb)       // z_3 = x_1 * (DA - CB)^2
 		fp448.fe_sqr(mut z3, z3)
 		fp448.fe_mult(mut z3, z3, x1)
 
-		fp448.fe_mult(mut x2, aa, bb) // x₂ = AA * BB
+		// Step 4.3: Perform Point Doubling to update (x2, z2)
+		fp448.fe_mult(mut x2, aa, bb)      // x_2 = AA * BB
 
-		fp448.fe_mult_32(mut z2, e, 39081) // z₂ = E * (AA + a24 * E)
+		// z_2 = E * (AA + a24 * E) where a24 = 39081 for Curve448
+		fp448.fe_mult_32(mut z2, e, 39081) 
 		fp448.fe_add(mut z2, z2, aa)
 		fp448.fe_mult(mut z2, z2, e)
 	}

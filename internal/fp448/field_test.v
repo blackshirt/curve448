@@ -408,3 +408,9 @@ fn test_sqrtratio() {
 
 	assert ws == 1
 }
+
+fn test_unreduced_comparison() {
+	a := fe_zero
+	b := fe_p
+	assert fe_equal(a, b) == true
+}
