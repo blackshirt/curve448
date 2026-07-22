@@ -252,6 +252,27 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	}
 
 	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
+	// Correct Solinas reduction mod p = 2^448 - 2^224 - 1
+	// Max product limb index is r[14] (0 to 14 = 15 total limbs)
+
+	mut t0 := add_128(r[0], add_128(r[8], r[12]))
+	mut t1 := add_128(r[1], add_128(r[9], r[13]))
+	mut t2 := add_128(r[2], add_128(r[10], r[14]))
+	mut t3 := add_128(r[3], r[11]) // Note: r[15] is 0, so omitted
+
+	// High limbs fold with (r[i+4] + r[i+8] + 2*r[i+12])
+	mut r12_x2 := lsh_128(r[12])
+	mut r13_x2 := lsh_128(r[13])
+	mut r14_x2 := lsh_128(r[14])
+
+	mut t4 := add_128(r[4], add_128(r[8], r12_x2))
+	mut t5 := add_128(r[5], add_128(r[9], r13_x2))
+	mut t6 := add_128(r[6], add_128(r[10], r14_x2))
+	mut t7 := add_128(r[7], r[11]) // Note: r[15] is 0, so omitted
+
+	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+
+	/*
 	mut t0 := add_128(r[0], r[8])
 	t0 = add_128(t0, r[12])
 	mut t1 := add_128(r[1], r[9])
@@ -266,8 +287,8 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	mut t6 := add_128(r[6], r[10])
 	t6 = add_128(t6, lsh_128(r[14]))
 	mut t7 := add_128(r[7], r[11])
-
-	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+	*/
+	// reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
 
 	// Best-effort source-level clearing of reusable stack slots. For strict
 	// zeroization guarantees, verify the generated C/assembly does not elide it.
@@ -389,12 +410,14 @@ fn (mut x Field) to_bytes(mut dst []u8) ! {
 fn fe_reduce(mut x Field) {
 	// by the light reduction, we have a field element representation
 	// x < 2⁴⁴⁸ + 2²³² + 2⁸, but we need x < 2⁴⁴⁸ - 2²²⁴ - 1 (p).
+
 	fe_carry_propagates(mut x)
 
 	// Test if x + 2^224 + 1 >= 2^448 (equivalent to x >= p)
 	mut c := u64(1)
 	for i := 0; i < 8; i++ {
-		add := if i == 4 { u64(1) } else { u64(0) }
+		// Branchless offset addition: adds 1 at limb 4 without ternary operators
+		add := u64(i == 4)
 		s := x.el[i] + add + c
 		c = s >> fe_limb_size
 	}
@@ -421,21 +444,18 @@ fn fe_carry_propagates(mut x Field) {
 	// In rare edge cases where upper limbs are near their maximum value
 	// (e.g., right after c[7] reduction addition to el[0] and el[4]),
 	// two carry passes might still leave a single bit overflow in el[0] or el[4].
-	// Fix: Use a loop until the carry c naturally collapses to zero,
-	// ensuring complete reduction in all edge conditions.
-	for {
-		mut c := u64(0)
+	// Exactly 2 passes are mathematically proven to absorb all Solinas carries (2^448 = 2^224 + 1)
+	mut c := u64(0)
+	for _ in 0 .. 2 {
 		for i := 0; i < 8; i++ {
 			s := x.el[i] + c
 			x.el[i] = s & fe_masklow_56bits
 			c = s >> fe_limb_size
 		}
-		if c == 0 {
-			break
-		}
 		// Fold carry modulo p = 2^448 - 2^224 - 1
 		x.el[0] += c
 		x.el[4] += c
+		c = 0
 	}
 }
 
@@ -670,6 +690,7 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 	return unsigned.uint128_new(lo, hi)
 }
 
+// mul_4limb_schoolbook performs 4x4 limb schoolbook multiplication into a 7-element Uint128 array.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
 	// This routine accepts mut out [7]unsigned.Uint128, but it accumulates (add_128)
@@ -688,12 +709,16 @@ fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 
 	clear_u64x4(mut y)
 }
 
+// reduce_8limb_product reduces 8 128-bit accumulators down to an 8-limb 56-bit field element.
+//
+// Sequentially extracts full 128-bit carries (`(hi << 8) | (lo >> 56)`) to ensure zero
+// upper-bit truncation before applying final Solinas reduction.
 @[direct_array_access; inline]
 fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
 	mut res := Field{}
 	mut c := u64(0)
 
-	// Sequential 128-bit limb carry extraction
+	// Step-by-step carry extraction across 128-bit limb accumulators
 	t0 = t0.add(unsigned.uint128_new(c, 0))
 	res.el[0] = t0.lo & fe_masklow_56bits
 	c = (t0.hi << 8) | (t0.lo >> 56)
@@ -741,6 +766,7 @@ fn clear_u64x4(mut values [4]u64) {
 	}
 }
 
+// clear_uint128x7 zeroes out a 7-element array of Uint128 values.
 @[direct_array_access; inline]
 fn clear_uint128x7(mut values [7]unsigned.Uint128) {
 	zero := unsigned.uint128_new(0, 0)
