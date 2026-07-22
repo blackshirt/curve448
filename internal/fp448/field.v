@@ -326,7 +326,13 @@ pub fn (mut z Field) set_bytes(b []u8) ! {
 }
 
 // Check if field element is in canonical form [0, p-1]
-fn (z Field) is_canonical() bool {
+fn (x Field) is_canonical() bool {
+	// We directly checks individual limbs with z.el[i] > fe_masklow_56bits.
+	// However, if a field element has unpropagated carries (e.g., el[0] = 2^56
+	// while the total value is still modulo $< p$),
+	// it will incorrectly return false, so we reduce it firts
+	mut z := x
+	fe_reduce(mut z)
 	// Return false if any limb exceeds 56 bits
 	for i := 0; i < 8; i++ {
 		if z.el[i] > fe_masklow_56bits { return false }
