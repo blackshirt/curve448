@@ -685,45 +685,48 @@ fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 
 
 @[direct_array_access; inline]
 fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
-	mut c0 := shift_right_by56(mut t0)
-	mut c1 := shift_right_by56(mut t1)
-	mut c2 := shift_right_by56(mut t2)
-	mut c3 := shift_right_by56(mut t3)
-	mut c4 := shift_right_by56(mut t4)
-	mut c5 := shift_right_by56(mut t5)
-	mut c6 := shift_right_by56(mut t6)
-	mut c7 := shift_right_by56(mut t7)
+	mut res := Field{}
+	mut c := u64(0)
 
-	z.el[0] = (t0.lo & fe_masklow_56bits) + c7
-	z.el[1] = (t1.lo & fe_masklow_56bits) + c0
-	z.el[2] = (t2.lo & fe_masklow_56bits) + c1
-	z.el[3] = (t3.lo & fe_masklow_56bits) + c2
-	z.el[4] = (t4.lo & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (t5.lo & fe_masklow_56bits) + c4
-	z.el[6] = (t6.lo & fe_masklow_56bits) + c5
-	z.el[7] = (t7.lo & fe_masklow_56bits) + c6
+	// Sequential 128-bit limb carry extraction
+	t0 = t0.add(unsigned.uint128_new(c, 0))
+	res.el[0] = t0.lo & fe_masklow_56bits
+	c = (t0.hi << 8) | (t0.lo >> 56)
 
-	// If there are carries generated, apply reduction step once more
-	c0 = z.el[0] >> fe_limb_size
-	c1 = z.el[1] >> fe_limb_size
-	c2 = z.el[2] >> fe_limb_size
-	c3 = z.el[3] >> fe_limb_size
-	c4 = z.el[4] >> fe_limb_size
-	c5 = z.el[5] >> fe_limb_size
-	c6 = z.el[6] >> fe_limb_size
-	c7 = z.el[7] >> fe_limb_size
+	t1 = t1.add(unsigned.uint128_new(c, 0))
+	res.el[1] = t1.lo & fe_masklow_56bits
+	c = (t1.hi << 8) | (t1.lo >> 56)
 
-	z.el[0] = (z.el[0] & fe_masklow_56bits) + c7
-	z.el[1] = (z.el[1] & fe_masklow_56bits) + c0
-	z.el[2] = (z.el[2] & fe_masklow_56bits) + c1
-	z.el[3] = (z.el[3] & fe_masklow_56bits) + c2
-	z.el[4] = (z.el[4] & fe_masklow_56bits) + c3 + c7
-	z.el[5] = (z.el[5] & fe_masklow_56bits) + c4
-	z.el[6] = (z.el[6] & fe_masklow_56bits) + c5
-	z.el[7] = (z.el[7] & fe_masklow_56bits) + c6
+	t2 = t2.add(unsigned.uint128_new(c, 0))
+	res.el[2] = t2.lo & fe_masklow_56bits
+	c = (t2.hi << 8) | (t2.lo >> 56)
 
-	// reduce
-	fe_carry_propagates(mut z)
+	t3 = t3.add(unsigned.uint128_new(c, 0))
+	res.el[3] = t3.lo & fe_masklow_56bits
+	c = (t3.hi << 8) | (t3.lo >> 56)
+
+	t4 = t4.add(unsigned.uint128_new(c, 0))
+	res.el[4] = t4.lo & fe_masklow_56bits
+	c = (t4.hi << 8) | (t4.lo >> 56)
+
+	t5 = t5.add(unsigned.uint128_new(c, 0))
+	res.el[5] = t5.lo & fe_masklow_56bits
+	c = (t5.hi << 8) | (t5.lo >> 56)
+
+	t6 = t6.add(unsigned.uint128_new(c, 0))
+	res.el[6] = t6.lo & fe_masklow_56bits
+	c = (t6.hi << 8) | (t6.lo >> 56)
+
+	t7 = t7.add(unsigned.uint128_new(c, 0))
+	res.el[7] = t7.lo & fe_masklow_56bits
+	c = (t7.hi << 8) | (t7.lo >> 56)
+
+	// Reduce top carry using Solinas identity 2^448 = 2^224 + 1
+	res.el[0] += c
+	res.el[4] += c
+
+	fe_carry_propagates(mut res)
+	fe_clone(mut z, res)
 }
 
 @[direct_array_access; inline]
