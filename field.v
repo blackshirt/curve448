@@ -239,9 +239,16 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	y01_3 := y.el[3] + y.el[7]
 	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
 
-	// apply reduction
+	// Apply reduction
+	//
+	// Apply bias to prevent 128-bit unsigned underflow when computing z1 = z1 - z0 - z2
+	// High bound for z0[i] + z2[i] is well within 128-bit space.
+	// Adding 2^120 bias guarantees (z1[i] + bias) >= (z0[i] + z2[i]).
+	bias := unsigned.uint128_new(0, u64(1) << 56) // 2^120 bias
+
 	for i := 0; i < 7; i++ {
-		z1[i] = sub_128(sub_128(z1[i], z0[i]), z2[i])
+		z1_biased := add_128(z1[i], bias)
+		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
 	}
 
 	mut r := [15]unsigned.Uint128{}
@@ -251,6 +258,11 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 		r[i + 8] = add_128(r[i + 8], z2[i])
 	}
 
+	// Subtract the bias back out from limb 4..10
+	// (2^120 added to 7 limbs corresponds to 2^120 subtracted at position i+4)
+	for i := 0; i < 7; i++ {
+		r[i + 4] = sub_128(r[i + 4], bias)
+	}
 	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
 	// Correct Solinas reduction mod p = 2^448 - 2^224 - 1
 	// Max product limb index is r[14] (0 to 14 = 15 total limbs)
@@ -348,7 +360,8 @@ fn (x Field) is_canonical() bool {
 	// Test if z >= p by computing carry of z + (2^224 + 1)
 	mut c := u64(1) // +1 bit 0
 	for i := 0; i < 8; i++ {
-		add := if i == 4 { u64(1) } else { u64(0) } // +1 bit 224
+		// Branchless: add is 1 when i == 4, else 0
+		add := u64(((i ^ 4) - 1) >> 31) & 1
 		sum := z.el[i] + add + c
 		c = sum >> 56
 	}
