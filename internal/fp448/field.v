@@ -668,6 +668,11 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
+	// This routine accepts mut out [7]unsigned.Uint128, but it accumulates (add_128)
+	// into out[i + j] without zeroing out first.
+	// If out contains uninitialized memory or previous stack junk,
+	// the products will be corrupted. so we initialize out to zero
+	clear_uint128x7(mut out)
 	mut x := [x0, x1, x2, x3]!
 	mut y := [y0, y1, y2, y3]!
 	for i := 0; i < 4; i++ {
