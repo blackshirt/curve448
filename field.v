@@ -254,7 +254,6 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	// Fold high polynomial limbs with B⁸ = B⁴ + 1.
 	// Correct Solinas reduction mod p = 2^448 - 2^224 - 1
 	// Max product limb index is r[14] (0 to 14 = 15 total limbs)
-
 	mut t0 := add_128(r[0], add_128(r[8], r[12]))
 	mut t1 := add_128(r[1], add_128(r[9], r[13]))
 	mut t2 := add_128(r[2], add_128(r[10], r[14]))
@@ -271,24 +270,6 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	mut t7 := add_128(r[7], r[11]) // Note: r[15] is 0, so omitted
 
 	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
-
-	/*
-	mut t0 := add_128(r[0], r[8])
-	t0 = add_128(t0, r[12])
-	mut t1 := add_128(r[1], r[9])
-	t1 = add_128(t1, r[13])
-	mut t2 := add_128(r[2], r[10])
-	t2 = add_128(t2, r[14])
-	mut t3 := add_128(r[3], r[11])
-	mut t4 := add_128(r[4], r[8])
-	t4 = add_128(t4, lsh_128(r[12]))
-	mut t5 := add_128(r[5], r[9])
-	t5 = add_128(t5, lsh_128(r[13]))
-	mut t6 := add_128(r[6], r[10])
-	t6 = add_128(t6, lsh_128(r[14]))
-	mut t7 := add_128(r[7], r[11])
-	*/
-	// reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
 
 	// Best-effort source-level clearing of reusable stack slots. For strict
 	// zeroization guarantees, verify the generated C/assembly does not elide it.
@@ -455,6 +436,9 @@ fn fe_carry_propagates(mut x Field) {
 		// Fold carry modulo p = 2^448 - 2^224 - 1
 		x.el[0] += c
 		x.el[4] += c
+		// Reset c to 0 because its value was consumed above.
+		// Pass 2 will now sweep x.el[0..7] and extract any new
+		// limb overflows created by x.el[0] += c and x.el[4] += c.
 		c = 0
 	}
 }
