@@ -404,6 +404,8 @@ fn fe_reduce(mut x Field) {
 		x.el[i] = s & fe_masklow_56bits
 		c = s >> fe_limb_size
 	}
+	// Ensure any remaining carry is folded (guarantee fully reduced result)
+	fe_carry_propagates(mut x)
 }
 
 // fe_carry_propagates performs a single pass of carry propagation across the field.
