@@ -410,8 +410,8 @@ fn fe_reduce(mut x Field) {
 	// Test if x + 2^224 + 1 >= 2^448 (equivalent to x >= p)
 	mut c := u64(1)
 	for i := 0; i < 8; i++ {
-		// Branchless offset addition: adds 1 at limb 4 without ternary operators
-		add := u64(i == 4)
+		// Branchless: add is 1 when i == 4, else 0
+		add := u64(((i ^ 4) - 1) >> 31) & 1
 		s := x.el[i] + add + c
 		c = s >> fe_limb_size
 	}
