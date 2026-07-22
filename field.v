@@ -460,13 +460,8 @@ fn fe_cmp(a Field, b Field) int {
 		c |= x.el[i] ^ y.el[i]
 	}
 
-	// Collapse the difference mask down to a LSB bit.
-	// If c was 0 (meaning all limbs matched), then c - 1 will have the sign bit set (1).
-	// If c was non-zero, the sign bit of c - 1 will be 0.
-	c = (c & 0xFFFFFFFF) | (c >> 32)
-	c--
-	// returns 1 if the a = b, else 0
-	return int(c >> 63)
+	// Return 1 if equal (diff == 0), else 0 in constant-time
+	return int(1 - ((c | (0 - c)) >> 63))
 }
 
 // fe_cselect set z to a if c == 1, and to b if c == 0
