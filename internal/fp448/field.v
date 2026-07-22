@@ -411,24 +411,25 @@ fn fe_reduce(mut x Field) {
 // while applying the Solinas prime reduction on the overflow carry from limb 7.
 @[direct_array_access; inline]
 fn fe_carry_propagates(mut x Field) {
-	// Extract the carry (overflow above 56 bits) from each limb.
-	mut c := u64(0)
-	for i := 0; i < 8; i++ {
-		s := x.el[i] + c
-		x.el[i] = s & fe_masklow_56bits
-		c = s >> fe_limb_size
+	// In rare edge cases where upper limbs are near their maximum value
+	// (e.g., right after c[7] reduction addition to el[0] and el[4]),
+	// two carry passes might still leave a single bit overflow in el[0] or el[4].
+	// Fix: Use a loop until the carry c naturally collapses to zero,
+	// ensuring complete reduction in all edge conditions.
+	for {
+		mut c := u64(0)
+		for i := 0; i < 8; i++ {
+			s := x.el[i] + c
+			x.el[i] = s & fe_masklow_56bits
+			c = s >> fe_limb_size
+		}
+		if c == 0 {
+			break
+		}
+		// Fold carry modulo p = 2^448 - 2^224 - 1
+		x.el[0] += c
+		x.el[4] += c
 	}
-	x.el[0] += c
-	x.el[4] += c
-
-	c = 0
-	for i := 0; i < 8; i++ {
-		s := x.el[i] + c
-		x.el[i] = s & fe_masklow_56bits
-		c = s >> fe_limb_size
-	}
-	x.el[0] += c
-	x.el[4] += c
 }
 
 // fe_equal checks whether a == b, return 1 if it true, 0 otherwise
