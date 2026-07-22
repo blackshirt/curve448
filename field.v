@@ -117,9 +117,10 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	// and wrap around. To guarantee that the result remains positive and fits in u64,
 	// we add 2 * p.el[i] (which is at least 2^57 - 4) to a.el[i] before subtracting b.el[i].
 	// We then extract the carry (which acts as a borrow flag) and mask the limb.
+	// UPDATED: use 4*p instead of 2*p
 	for i := 0; i < 8; i++ {
 		// add by 2 * p.el[i]
-		z.el[i] = (a.el[i] + (fe_p.el[i] << 1)) - b.el[i]
+		z.el[i] = (a.el[i] + (fe_p.el[i] << 2)) - b.el[i]
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = z.el[i] & fe_masklow_56bits
 	}
@@ -141,41 +142,34 @@ fn fe_sub(mut z Field, a Field, b Field) {
 }
 
 // fe_negate negates a field element: z = -a (mod p).
-// It subtracts each limb of a from the corresponding limb of 2 * p,
-// propagates the carries, and applies modular reduction.
+// Uses 4*p (rather than 2*p) as the subtrahend base for the same reason as
+// fe_sub: 2*p left only a 1-3 unit margin against the documented < 2^57
+// per-limb bound, which is too thin.
 @[direct_array_access; inline]
 fn fe_negate(mut z Field, a Field) {
-	// Step 1: Subtract each limb of a from 2 * p.
-	// The limbs of 2 * p are:
-	//     2 * p.el[i] = 2^57 - 2 = 0x01fffffffffffffe  (for i != 4)
-	//     2 * p.el[4] = 2^57 - 4 = 0x01fffffffffffffc  (for i == 4)
-	// This subtraction is guaranteed not to underflow because a.el[i] < 2^57.
-	z.el[0] = u64(0x01fffffffffffffe) - a.el[0]
-	z.el[1] = u64(0x01fffffffffffffe) - a.el[1]
-	z.el[2] = u64(0x01fffffffffffffe) - a.el[2]
-	z.el[3] = u64(0x01fffffffffffffe) - a.el[3]
-	z.el[4] = u64(0x01fffffffffffffc) - a.el[4]
-	z.el[5] = u64(0x01fffffffffffffe) - a.el[5]
-	z.el[6] = u64(0x01fffffffffffffe) - a.el[6]
-	z.el[7] = u64(0x01fffffffffffffe) - a.el[7]
-
+	// Step 1: Subtract each limb of a from 4 * p.
+	z.el[0] = u64(0x03fffffffffffffc) - a.el[0]
+	z.el[1] = u64(0x03fffffffffffffc) - a.el[1]
+	z.el[2] = u64(0x03fffffffffffffc) - a.el[2]
+	z.el[3] = u64(0x03fffffffffffffc) - a.el[3]
+	z.el[4] = u64(0x03fffffffffffff8) - a.el[4]
+	z.el[5] = u64(0x03fffffffffffffc) - a.el[5]
+	z.el[6] = u64(0x03fffffffffffffc) - a.el[6]
+	z.el[7] = u64(0x03fffffffffffffc) - a.el[7]
 	// Step 2: Extract and propagate the carries.
 	mut c := [8]u64{}
 	for i := 0; i < 8; i++ {
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = (z.el[i] & fe_masklow_56bits)
 	}
-
 	// Step 3: Apply modular reduction using the Solinas prime identity:
 	//     2^448 = 2^224 + 1 (mod p)
 	z.el[0] += c[7]
 	z.el[4] += c[7]
-
 	// Step 4: Propagate the carries to higher limbs.
 	for i := 1; i < 8; i++ {
 		z.el[i] += c[i - 1]
 	}
-
 	// final carry
 	fe_carry_propagates(mut z)
 }
