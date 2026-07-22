@@ -6,8 +6,6 @@
 // key exchange (ECDH) mechanism through curve448 curve, offering 224 bits of security.
 module curve448
 
-import internal.fp448
-
 // X448 diffie-helman key-exchange (ECDH) algorithm.
 //
 // This module implements the X448 primitive, as defined by [RFC 7748].
@@ -42,39 +40,39 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	s[0] &= 252
 	s[55] |= 128
 
-	mut u := fp448.new_field()
+	mut u := new_field()
 	u.set_bytes(point)!
 
 	// setup vars
 	mut x1 := u
-	mut x2 := fp448.fe_one
-	mut z2 := fp448.new_field()
+	mut x2 := fe_one
+	mut z2 := new_field()
 	mut x3 := u
-	mut z3 := fp448.fe_one
+	mut z3 := fe_one
 	defer {
-		fp448.fe_clear(mut x1)
-		fp448.fe_clear(mut x2)
-		fp448.fe_clear(mut z2)
-		fp448.fe_clear(mut x3)
-		fp448.fe_clear(mut z3)
+		fe_clear(mut x1)
+		fe_clear(mut x2)
+		fe_clear(mut z2)
+		fe_clear(mut x3)
+		fe_clear(mut z3)
 	}
 	mut swap := 0
 
 	// temporary vars
-	mut a, mut aa := fp448.new_field(), fp448.new_field()
-	mut b, mut bb := fp448.new_field(), fp448.new_field()
-	mut e, mut c, mut d := fp448.new_field(), fp448.new_field(), fp448.new_field()
-	mut da, mut cb := fp448.new_field(), fp448.new_field()
+	mut a, mut aa := new_field(), new_field()
+	mut b, mut bb := new_field(), new_field()
+	mut e, mut c, mut d := new_field(), new_field(), new_field()
+	mut da, mut cb := new_field(), new_field()
 	defer {
-		fp448.fe_clear(mut a)
-		fp448.fe_clear(mut aa)
-		fp448.fe_clear(mut b)
-		fp448.fe_clear(mut bb)
-		fp448.fe_clear(mut e)
-		fp448.fe_clear(mut c)
-		fp448.fe_clear(mut d)
-		fp448.fe_clear(mut da)
-		fp448.fe_clear(mut cb)
+		fe_clear(mut a)
+		fe_clear(mut aa)
+		fe_clear(mut b)
+		fe_clear(mut bb)
+		fe_clear(mut e)
+		fe_clear(mut c)
+		fe_clear(mut d)
+		fe_clear(mut da)
+		fe_clear(mut cb)
 	}
 	// Step 4: The Montgomery ladder loop.
 	// We iterate bit-by-bit through the 448-bit scalar from the MSB (bit 447) to the LSB (bit 0).
@@ -92,52 +90,52 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 
 		// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
 		// if swap is 1. This implements the CSWAP step of the ladder.
-		fp448.fe_cswap(mut x2, mut x3, swap)
-		fp448.fe_cswap(mut z2, mut z3, swap)
+		fe_cswap(mut x2, mut x3, swap)
+		fe_cswap(mut z2, mut z3, swap)
 
 		// Update swap flag for the next iteration.
 		swap = kt
 
 		// Step 4.1: Compute intermediate values for differential addition and doubling.
-		fp448.fe_add(mut a, x2, z2) // A = x_2 + z_2
-		fp448.fe_sqr(mut aa, a) // AA = A^2
-		fp448.fe_sub(mut b, x2, z2) // B = x_2 - z_2
-		fp448.fe_sqr(mut bb, b) // BB = B^2
-		fp448.fe_sub(mut e, aa, bb) // E = AA - BB (this represents the difference)
+		fe_add(mut a, x2, z2) // A = x_2 + z_2
+		fe_sqr(mut aa, a) // AA = A^2
+		fe_sub(mut b, x2, z2) // B = x_2 - z_2
+		fe_sqr(mut bb, b) // BB = B^2
+		fe_sub(mut e, aa, bb) // E = AA - BB (this represents the difference)
 
-		fp448.fe_add(mut c, x3, z3) // C = x_3 + z_3
-		fp448.fe_sub(mut d, x3, z3) // D = x_3 - z_3
-		fp448.fe_mult(mut da, d, a) // DA = D * A
-		fp448.fe_mult(mut cb, c, b) // CB = C * B
+		fe_add(mut c, x3, z3) // C = x_3 + z_3
+		fe_sub(mut d, x3, z3) // D = x_3 - z_3
+		fe_mult(mut da, d, a) // DA = D * A
+		fe_mult(mut cb, c, b) // CB = C * B
 
 		// Step 4.2: Perform Point Addition to update (x3, z3)
-		fp448.fe_add(mut x3, da, cb) // x_3 = (DA + CB)^2
-		fp448.fe_sqr(mut x3, x3)
+		fe_add(mut x3, da, cb) // x_3 = (DA + CB)^2
+		fe_sqr(mut x3, x3)
 
-		fp448.fe_sub(mut z3, da, cb) // z_3 = x_1 * (DA - CB)^2
-		fp448.fe_sqr(mut z3, z3)
-		fp448.fe_mult(mut z3, z3, x1)
+		fe_sub(mut z3, da, cb) // z_3 = x_1 * (DA - CB)^2
+		fe_sqr(mut z3, z3)
+		fe_mult(mut z3, z3, x1)
 
 		// Step 4.3: Perform Point Doubling to update (x2, z2)
-		fp448.fe_mult(mut x2, aa, bb) // x_2 = AA * BB
+		fe_mult(mut x2, aa, bb) // x_2 = AA * BB
 
 		// z_2 = E * (AA + a24 * E) where a24 = 39081 for Curve448
-		fp448.fe_mult_32(mut z2, e, 39081)
-		fp448.fe_add(mut z2, z2, aa)
-		fp448.fe_mult(mut z2, z2, e)
+		fe_mult_32(mut z2, e, 39081)
+		fe_add(mut z2, z2, aa)
+		fe_mult(mut z2, z2, e)
 	}
 	// (x₂, x₃) = cswap(swap, x₂, x₃)
 	// (z₂, z₃) = cswap(swap, z₂, z₃)
-	fp448.fe_cswap(mut x2, mut x3, swap)
-	fp448.fe_cswap(mut z2, mut z3, swap)
+	fe_cswap(mut x2, mut x3, swap)
+	fe_cswap(mut z2, mut z3, swap)
 
 	// Return x₂ * z₂ᵖ ⁻ ²
-	mut ret := fp448.new_field()
-	defer { fp448.fe_clear(mut ret) }
-	fp448.fe_inverse(mut ret, z2)
-	fp448.fe_mult(mut ret, x2, ret)
+	mut ret := new_field()
+	defer { fe_clear(mut ret) }
+	fe_inverse(mut ret, z2)
+	fe_mult(mut ret, x2, ret)
 
-	ret_is_zero := fp448.fe_cmp(ret, fp448.fe_zero)
+	ret_is_zero := fe_cmp(ret, fe_zero)
 	out := ret.bytes()
 	// Cleaning up temporary variables, its contains sensitive data
 	// TODO: clear another scalar

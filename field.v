@@ -4,7 +4,7 @@
 //
 // This file contains low-level primitive in the mean of Galois-Field
 // element over 448-bits for curve448 operations.
-module fp448
+module curve448
 
 import math.bits
 import math.unsigned
@@ -14,7 +14,7 @@ import math.unsigned
 //     t.e0*2⁰ + t.e1*2⁵⁶ + t.e2*2¹¹² + t.e3*2¹⁶⁸ + t.e4*2²²⁴ + t.e5*2²⁸⁰ + t.e6*2³³⁶ + t.e7*2³⁹²
 //
 @[noinit]
-pub struct Field {
+struct Field {
 mut:
 	// Between operations, all limbs are expected to be lower than 2⁵⁷ (ie, fits in 56-bits)
 	el [8]u64
@@ -22,7 +22,7 @@ mut:
 
 // new_field creates an empty field
 @[inline]
-pub fn new_field() Field {
+fn new_field() Field {
 	return fe_zero
 }
 
@@ -32,12 +32,12 @@ const fe_limb_size = 56
 const fe_masklow_56bits = u64(0x00ff_ffff_ffff_ffff)
 
 // zero field element
-pub const fe_zero = Field{
+const fe_zero = Field{
 	el: [u64(0), 0, 0, 0, 0, 0, 0, 0]!
 }
 
 // one field element
-pub const fe_one = Field{
+const fe_one = Field{
 	el: [u64(1), 0, 0, 0, 0, 0, 0, 0]!
 }
 
@@ -53,7 +53,7 @@ const fe_p = Field{
 // after use. Strict secure-zeroization guarantees require auditing generated
 // C/assembly or replacing this with a compiler-resistant wipe primitive.
 @[direct_array_access; inline]
-pub fn fe_clear(mut z Field) {
+fn fe_clear(mut z Field) {
 	for i := 0; i < 8; i++ {
 		z.el[i] = 0
 	}
@@ -63,7 +63,7 @@ pub fn fe_clear(mut z Field) {
 // It adds the elements limb-by-limb, extracts the carries, and performs a single
 // reduction step using the Solinas prime identity: 2^448 = 2^224 + 1 (mod p).
 @[direct_array_access; inline]
-pub fn fe_add(mut z Field, a Field, b Field) {
+fn fe_add(mut z Field, a Field, b Field) {
 	// c holds the carry bits extracted from each 56-bit limb addition.
 	// Since we are adding two 56-bit (or slightly larger) limbs, the sum can exceed
 	// 56 bits. The carry bit c[i] will be either 0 or 1.
@@ -103,7 +103,7 @@ pub fn fe_add(mut z Field, a Field, b Field) {
 // To prevent underflow, it first adds 2 * p (a multiple of the modulus) to a,
 // subtracts b, extracts the carries, and applies a reduction step.
 @[direct_array_access; inline]
-pub fn fe_sub(mut z Field, a Field, b Field) {
+fn fe_sub(mut z Field, a Field, b Field) {
 	// c holds the carry/borrow bits extracted from each limb subtraction.
 	mut c := [8]u64{}
 
@@ -139,7 +139,7 @@ pub fn fe_sub(mut z Field, a Field, b Field) {
 // It subtracts each limb of a from the corresponding limb of 2 * p,
 // propagates the carries, and applies modular reduction.
 @[direct_array_access; inline]
-pub fn fe_negate(mut z Field, a Field) {
+fn fe_negate(mut z Field, a Field) {
 	// Step 1: Subtract each limb of a from 2 * p.
 	// The limbs of 2 * p are:
 	//     2 * p.el[i] = 2^57 - 2 = 0x01fffffffffffffe  (for i != 4)
@@ -177,7 +177,7 @@ pub fn fe_negate(mut z Field, a Field) {
 
 // fe_clone clones x into z
 @[direct_array_access; inline]
-pub fn fe_clone(mut z Field, x Field) {
+fn fe_clone(mut z Field, x Field) {
 	for i := 0; i < 8; i++ {
 		z.el[i] = x.el[i]
 	}
@@ -188,7 +188,7 @@ pub fn fe_clone(mut z Field, x Field) {
 // This is the most intensive routines.
 // TODO: optimize it with some well-known algorithm
 @[direct_array_access]
-pub fn fe_mult(mut z Field, x Field, y Field) {
+fn fe_mult(mut z Field, x Field, y Field) {
 	// fe_mult_generic(mut z, x, y)
 	fe_mult_karatsuba(mut z, x, y)
 }
@@ -274,13 +274,13 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 
 // square squares a field, ie, z = a*a (mod p)
 @[direct_array_access; inline]
-pub fn fe_sqr(mut z Field, a Field) {
+fn fe_sqr(mut z Field, a Field) {
 	fe_mult_karatsuba(mut z, a, a)
 }
 
 // fe_mult_32 multiplies x with u32 (mod p)
 @[direct_array_access; inline]
-pub fn fe_mult_32(mut z Field, x Field, y u32) {
+fn fe_mult_32(mut z Field, x Field, y u32) {
 	// 56-bits multiplication, returns u64 (lo, hi) pair
 	x0lo, x0hi := mult_56(x.el[0], y)
 	x1lo, x1hi := mult_56(x.el[1], y)
@@ -306,7 +306,7 @@ pub fn fe_mult_32(mut z Field, x Field, y u32) {
 
 // set_bytes sets the field values from bytes array
 @[direct_array_access; inline]
-pub fn (mut z Field) set_bytes(b []u8) ! {
+fn (mut z Field) set_bytes(b []u8) ! {
 	if b.len != 56 {
 		return error('bad set_bytes input')
 	}
@@ -351,7 +351,7 @@ fn (x Field) is_canonical() bool {
 
 // bytes serializes reduced x field into bytes
 @[direct_array_access; inline]
-pub fn (mut x Field) bytes() []u8 {
+fn (mut x Field) bytes() []u8 {
 	mut dst := []u8{len: 56}
 	x.to_bytes(mut dst) or { panic('error on bytes call') }
 	return dst
@@ -434,7 +434,7 @@ fn fe_carry_propagates(mut x Field) {
 
 // fe_equal checks whether a == b, return 1 if it true, 0 otherwise
 @[direct_array_access; inline]
-pub fn fe_equal(a Field, b Field) bool {
+fn fe_equal(a Field, b Field) bool {
 	return fe_cmp(a, b) == 1
 }
 
@@ -442,7 +442,7 @@ pub fn fe_equal(a Field, b Field) bool {
 // Returns 1 if a == b (mod p), and 0 otherwise.
 // This function is implemented to run in constant-time.
 @[direct_array_access; inline]
-pub fn fe_cmp(a Field, b Field) int {
+fn fe_cmp(a Field, b Field) int {
 	// First, reduce both elements to their canonical representation.
 	mut x := a
 	mut y := b
@@ -480,7 +480,7 @@ fn fe_cselect(mut z Field, a Field, b Field, c int) {
 
 // fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
 @[direct_array_access; inline]
-pub fn fe_cswap(mut a Field, mut b Field, c int) {
+fn fe_cswap(mut a Field, mut b Field, c int) {
 	// The mask is the all-1 or all-0 word
 	m := mask_64bits(c)
 	mut dummy := u64(0)
@@ -495,7 +495,7 @@ pub fn fe_cswap(mut a Field, mut b Field, c int) {
 
 // fe_inverse performs modular multiplicative inverse, ie, z = 1/x
 @[direct_array_access; inline]
-pub fn fe_inverse(mut z Field, x Field) {
+fn fe_inverse(mut z Field, x Field) {
 	mut t := Field{}
 	fe_power446(mut t, x)
 	fe_sqr(mut t, t)
@@ -579,30 +579,32 @@ fn fe_power446(mut v Field, z Field) {
 // If u/v is not a square, it returns (r, 0).
 // In both cases, r is set to u * (u*v)^((p-3)/4) (mod p).
 @[direct_array_access; inline]
-pub fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
+fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 	mut uv := Field{}
 	fe_mult(mut uv, u, v)
 	fe_power446(mut uv, uv)
 	fe_mult(mut r, u, uv)
 
+	// Check if v * r^2 == u
 	mut ck := Field{}
 	fe_sqr(mut ck, r)
 	fe_mult(mut ck, v, ck)
-	ws := fe_cmp(ck, u)
 
-	return r, ws
+	is_square := fe_cmp(ck, u)
+
+	return r, is_square
 }
 
 // fe_abs return absolute value of u, ie, |u| (mod p)
 @[direct_array_access; inline]
-pub fn fe_abs(mut z Field, u Field) {
+fn fe_abs(mut z Field, u Field) {
 	mut x := Field{}
 	fe_negate(mut x, u)
 	fe_cselect(mut z, x, u, u.is_negative())
 }
 
 @[direct_array_access; inline]
-pub fn (v Field) is_negative() int {
+fn (v Field) is_negative() int {
 	mut x := Field{}
 	fe_clone(mut x, v)
 	fe_reduce(mut x)

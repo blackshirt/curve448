@@ -2,7 +2,7 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
-module fp448
+module curve448
 
 struct AddTests {
 	x Field
