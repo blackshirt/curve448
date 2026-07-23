@@ -435,8 +435,14 @@ fn (x Field) is_canonical() bool {
 	// while the total value is still modulo $< p$),
 	// it will incorrectly return false, so we reduce it firts
 	mut z := x
-	fe_reduce(mut z)
-	// Return false if any limb exceeds 56 bits
+
+	// fe_reduce() performs full modular reduction — by definition its output is always in [0, p-1].
+	// The function then checks whether that already-reduced value is >= p.
+	// That can never be true. is_canonical() always returns true, for every input, no matter what.
+	// Return false if any limb exceeds 56 bits.
+	// fe_reduce(mut z)
+	fe_carry_propagates(mut z) // normalize limb form only — do NOT reduce mod p
+
 	for i := 0; i < 8; i++ {
 		if z.el[i] > fe_masklow_56bits { return false }
 	}
