@@ -286,9 +286,99 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 }
 
 // square squares a field, ie, z = a*a (mod p)
+// @[direct_array_access; inline]
+// fn fe_sqr(mut z Field, a Field) {
+//	fe_mult_karatsuba(mut z, a, a)
+// }
+
+// fe_sqr_karatsuba squares a field element using a dedicated squaring path,
+// rather than routing through the general fe_mult_karatsuba(z, a, a).
+//
+// Structurally this is the same 2-way Karatsuba split as fe_mult_karatsuba
+// (x = x0 + x1*B^4), but since the second operand is also x, all three
+// sub-products are themselves squarings:
+//     z0 = x0^2,  z2 = x1^2,  z1 = (x0+x1)^2 - z0 - z2
+// Each uses mul_4limb_schoolbook_square (10 multiplications) instead of
+// mul_4limb_schoolbook (16 multiplications): 30 total multiplications versus
+// 48 for a generic fe_mult_karatsuba(x, x) call, a ~37% reduction in the
+// dominant cost. This matters in practice because fe_power446 -- the
+// (p-3)/4 exponentiation behind both fe_inverse and fe_sqrtratio -- is
+// almost entirely a long chain of repeated squarings (over 400 of them for
+// a single fe_power446 call), so this is the highest-leverage optimization
+// in the whole field layer.
+@[direct_array_access; inline]
+fn fe_sqr_karatsuba(mut z Field, x Field) {
+	mut z0 := [7]unsigned.Uint128{}
+	mut z1 := [7]unsigned.Uint128{}
+	mut z2 := [7]unsigned.Uint128{}
+
+	mul_4limb_schoolbook_square(mut z0, x.el[0], x.el[1], x.el[2], x.el[3])
+	mul_4limb_schoolbook_square(mut z2, x.el[4], x.el[5], x.el[6], x.el[7])
+
+	x01_0 := x.el[0] + x.el[4]
+	x01_1 := x.el[1] + x.el[5]
+	x01_2 := x.el[2] + x.el[6]
+	x01_3 := x.el[3] + x.el[7]
+	mul_4limb_schoolbook_square(mut z1, x01_0, x01_1, x01_2, x01_3)
+
+	bias := unsigned.uint128_new(0, u64(1) << 56)
+	for i := 0; i < 7; i++ {
+		z1_biased := add_128(z1[i], bias)
+		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
+	}
+	for i := 0; i < 7; i++ {
+		z1[i] = sub_128(z1[i], bias)
+	}
+
+	mut z2_4x2 := lsh_128(z2[4])
+	mut z2_5x2 := lsh_128(z2[5])
+	mut z2_6x2 := lsh_128(z2[6])
+
+	mut t0 := add_128(z0[0], add_128(z1[4], add_128(z2[0], z2[4])))
+	mut t1 := add_128(z0[1], add_128(z1[5], add_128(z2[1], z2[5])))
+	mut t2 := add_128(z0[2], add_128(z1[6], add_128(z2[2], z2[6])))
+	mut t3 := add_128(z0[3], z2[3])
+	mut t4 := add_128(z0[4], add_128(z1[0], add_128(z1[4], add_128(z2[0], z2_4x2))))
+	mut t5 := add_128(z0[5], add_128(z1[1], add_128(z1[5], add_128(z2[1], z2_5x2))))
+	mut t6 := add_128(z0[6], add_128(z1[2], add_128(z1[6], add_128(z2[2], z2_6x2))))
+	mut t7 := add_128(z1[3], z2[3])
+
+	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+
+	clear_uint128x7(mut z0)
+	clear_uint128x7(mut z1)
+	clear_uint128x7(mut z2)
+}
+
+// mul_4limb_schoolbook_square performs 4-limb schoolbook squaring into a
+// 7-element Uint128 array. Diagonal terms x[i]*x[i] contribute once; cross
+// terms x[i]*x[j] (i != j) are equal for (i,j) and (j,i) in a general
+// product, so here they are computed once (i<j) and doubled via a 1-bit
+// left shift instead of a second multiplication.
+// Note: 10 word multiplications (4 diagonal + 6 cross) instead of the 16 that
+// mul_4limb_schoolbook(x, x) would perform.
+//
+// PRECONDITION: `out` must already be zero-initialized (true for every call
+// site here, which always passes a fresh `[7]unsigned.Uint128{}` literal --
+// V zero-initializes that on declaration, so no redundant clear is done here).
+@[direct_array_access; inline]
+fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
+	mut x := [x0, x1, x2, x3]!
+	for i := 0; i < 4; i++ {
+		out[2 * i] = add_128(out[2 * i], mult_64(x[i], x[i]))
+	}
+	for i := 0; i < 4; i++ {
+		for j := i + 1; j < 4; j++ {
+			out[i + j] = add_128(out[i + j], lsh_128(mult_64(x[i], x[j])))
+		}
+	}
+	clear_u64x4(mut x)
+}
+
+// square squares a field, ie, z = a*a (mod p)
 @[direct_array_access; inline]
 fn fe_sqr(mut z Field, a Field) {
-	fe_mult_karatsuba(mut z, a, a)
+	fe_sqr_karatsuba(mut z, a)
 }
 
 // fe_mult_32 multiplies x with u32 (mod p)
