@@ -279,17 +279,11 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 
 	// Best-effort source-level clearing of reusable stack slots. For strict
 	// zeroization guarantees, verify the generated C/assembly does not elide it.
-	clear_uint128x7(mut z0)
-	clear_uint128x7(mut z1)
-	clear_uint128x7(mut z2)
-	clear_uint128x15(mut r)
+	// clear_uint128x7(mut z0)
+	// clear_uint128x7(mut z1)
+	// clear_uint128x7(mut z2)
+	// clear_uint128x15(mut r)
 }
-
-// square squares a field, ie, z = a*a (mod p)
-// @[direct_array_access; inline]
-// fn fe_sqr(mut z Field, a Field) {
-//	fe_mult_karatsuba(mut z, a, a)
-// }
 
 // fe_sqr_karatsuba squares a field element using a dedicated squaring path,
 // rather than routing through the general fe_mult_karatsuba(z, a, a).
@@ -345,9 +339,10 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 
 	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
 
-	clear_uint128x7(mut z0)
-	clear_uint128x7(mut z1)
-	clear_uint128x7(mut z2)
+	// Maybe need clearing
+	// clear_uint128x7(mut z0)
+	// clear_uint128x7(mut z1)
+	// clear_uint128x7(mut z2)
 }
 
 // mul_4limb_schoolbook_square performs 4-limb schoolbook squaring into a
@@ -372,7 +367,7 @@ fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u
 			out[i + j] = add_128(out[i + j], lsh_128(mult_64(x[i], x[j])))
 		}
 	}
-	clear_u64x4(mut x)
+	// clear_u64x4(mut x)
 }
 
 // square squares a field, ie, z = a*a (mod p)
@@ -792,8 +787,8 @@ fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 
 			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
 		}
 	}
-	clear_u64x4(mut x)
-	clear_u64x4(mut y)
+	// clear_u64x4(mut x)
+	// clear_u64x4(mut y)
 }
 
 // reduce_8limb_product reduces 8 128-bit accumulators down to an 8-limb 56-bit field element.
