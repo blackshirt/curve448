@@ -20,12 +20,6 @@ mut:
 	el [8]u64
 }
 
-// new_field creates an empty field
-@[inline]
-fn new_field() Field {
-	return fe_zero
-}
-
 // The size of field limb, in bits
 const fe_limb_size = 56
 // Masking value for field's limb value, ie, 0x00ff_ffff_ffff_ffff

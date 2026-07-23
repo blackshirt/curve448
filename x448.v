@@ -40,13 +40,13 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	s[0] &= 252
 	s[55] |= 128
 
-	mut u := new_field()
+	mut u := Field{}
 	u.set_bytes(point)!
 
 	// setup vars
 	mut x1 := u
 	mut x2 := fe_one
-	mut z2 := new_field()
+	mut z2 := Field{}
 	mut x3 := u
 	mut z3 := fe_one
 	defer {
