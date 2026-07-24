@@ -21,9 +21,9 @@ mut:
 }
 
 // The size of field limb, in bits
-const fe_limb_size = 56
+const limbsize = 56
 // Masking value for field's limb value, ie, 0x00ff_ffff_ffff_ffff
-const fe_masklow_56bits = u64(0x00ff_ffff_ffff_ffff)
+const mask_56bits = u64(0x00ff_ffff_ffff_ffff)
 
 // zero field element
 const fe_zero = Field{
@@ -108,8 +108,8 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	for i := 0; i < 8; i++ {
 		// add by 4 * p.el[i]
 		z.el[i] = (a.el[i] + fe_4p_limbs[i]) - b.el[i]
-		c[i] = z.el[i] >> fe_limb_size
-		z.el[i] = z.el[i] & fe_masklow_56bits
+		c[i] = z.el[i] >> limbsize
+		z.el[i] = z.el[i] & mask_56bits
 	}
 
 	// Step 2: Apply the modular reduction.
@@ -142,8 +142,8 @@ fn fe_negate(mut z Field, a Field) {
 	// Step 2: Extract and propagate the carries.
 	mut c := [8]u64{}
 	for i := 0; i < 8; i++ {
-		c[i] = z.el[i] >> fe_limb_size
-		z.el[i] = (z.el[i] & fe_masklow_56bits)
+		c[i] = z.el[i] >> limbsize
+		z.el[i] = (z.el[i] & mask_56bits)
 	}
 	// Step 3: Apply modular reduction using the Solinas prime identity:
 	//     2^448 = 2^224 + 1 (mod p)
@@ -403,7 +403,7 @@ fn (mut z Field) set_bytes(b []u8) ! {
 
 // Check if field element is in canonical form [0, p-1]
 fn (x Field) is_canonical() bool {
-	// We directly checks individual limbs with z.el[i] > fe_masklow_56bits.
+	// We directly checks individual limbs with z.el[i] > mask_56bits.
 	// However, if a field element has unpropagated carries (e.g., el[0] = 2^56
 	// while the total value is still modulo $< p$),
 	// it will incorrectly return false, so we reduce it firts
@@ -417,7 +417,7 @@ fn (x Field) is_canonical() bool {
 	fe_weak_reduce(mut z) // normalize limb form only — do NOT reduce mod p
 
 	for i := 0; i < 8; i++ {
-		if z.el[i] > fe_masklow_56bits { return false }
+		if z.el[i] > mask_56bits { return false }
 	}
 
 	// Test if z >= p by computing carry of z + (2^224 + 1)
@@ -474,9 +474,9 @@ fn fe_reduce(mut x Field) {
 	mut c := u64(1)
 	for i := 0; i < 8; i++ {
 		// Branchless: add is 1 when i == 4, else 0
-		add := u64(((i ^ 4) - 1) >> 31) & 1
+		add := u64(1) - ((u64(i ^ 4) | (0 - u64(i ^ 4))) >> 63)
 		s := x.el[i] + add + c
-		c = s >> fe_limb_size
+		c = s >> limbsize
 	}
 
 	// Reduce by adding c*(2^224 + 1)
@@ -486,8 +486,8 @@ fn fe_reduce(mut x Field) {
 	c = 0
 	for i := 0; i < 8; i++ {
 		s := x.el[i] + c
-		x.el[i] = s & fe_masklow_56bits
-		c = s >> fe_limb_size
+		x.el[i] = s & mask_56bits
+		c = s >> limbsize
 	}
 	// Ensure any remaining carry is folded (guarantee fully reduced result)
 	fe_weak_reduce(mut x)
@@ -506,8 +506,8 @@ fn fe_weak_reduce(mut x Field) {
 	for _ in 0 .. 2 {
 		for i := 0; i < 8; i++ {
 			s := x.el[i] + c
-			x.el[i] = s & fe_masklow_56bits
-			c = s >> fe_limb_size
+			x.el[i] = s & mask_56bits
+			c = s >> limbsize
 		}
 		// Fold carry modulo p = 2^448 - 2^224 - 1
 		x.el[0] += c
@@ -517,6 +517,14 @@ fn fe_weak_reduce(mut x Field) {
 		// limb overflows created by x.el[0] += c and x.el[4] += c.
 		c = 0
 	}
+	// Final ripple for any bit overflowing el[0] or el[4] after pass 2.
+	// The issue: c was just added to x.el[0] and x.el[4], but no subsequent
+	// sweep occurs to handle the case where x.el[0] or x.el[4]
+	// overflow 56 bits as a result of that addition!
+	x.el[1] += x.el[0] >> limbsize
+	x.el[0] &= mask_56bits
+	x.el[5] += x.el[4] >> limbsize
+	x.el[4] &= mask_56bits
 }
 
 // fe_equal checks whether a == b, return 1 if it true, 0 otherwise
@@ -730,8 +738,8 @@ fn mult_64(a u64, b u64) unsigned.Uint128 {
 @[inline]
 fn mult_56(a u64, b u32) (u64, u64) {
 	hh, ll := bits.mul_64(a, u64(b))
-	lo := ll & fe_masklow_56bits
-	hi := (hh << 8) | (ll >> fe_limb_size)
+	lo := ll & mask_56bits
+	hi := (hh << 8) | (ll >> limbsize)
 	return lo, hi
 }
 
@@ -773,35 +781,35 @@ fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Ui
 
 	// Step-by-step carry extraction across 128-bit limb accumulators
 	t0 = t0.add(unsigned.uint128_new(c, 0))
-	res.el[0] = t0.lo & fe_masklow_56bits
+	res.el[0] = t0.lo & mask_56bits
 	c = (t0.hi << 8) | (t0.lo >> 56)
 
 	t1 = t1.add(unsigned.uint128_new(c, 0))
-	res.el[1] = t1.lo & fe_masklow_56bits
+	res.el[1] = t1.lo & mask_56bits
 	c = (t1.hi << 8) | (t1.lo >> 56)
 
 	t2 = t2.add(unsigned.uint128_new(c, 0))
-	res.el[2] = t2.lo & fe_masklow_56bits
+	res.el[2] = t2.lo & mask_56bits
 	c = (t2.hi << 8) | (t2.lo >> 56)
 
 	t3 = t3.add(unsigned.uint128_new(c, 0))
-	res.el[3] = t3.lo & fe_masklow_56bits
+	res.el[3] = t3.lo & mask_56bits
 	c = (t3.hi << 8) | (t3.lo >> 56)
 
 	t4 = t4.add(unsigned.uint128_new(c, 0))
-	res.el[4] = t4.lo & fe_masklow_56bits
+	res.el[4] = t4.lo & mask_56bits
 	c = (t4.hi << 8) | (t4.lo >> 56)
 
 	t5 = t5.add(unsigned.uint128_new(c, 0))
-	res.el[5] = t5.lo & fe_masklow_56bits
+	res.el[5] = t5.lo & mask_56bits
 	c = (t5.hi << 8) | (t5.lo >> 56)
 
 	t6 = t6.add(unsigned.uint128_new(c, 0))
-	res.el[6] = t6.lo & fe_masklow_56bits
+	res.el[6] = t6.lo & mask_56bits
 	c = (t6.hi << 8) | (t6.lo >> 56)
 
 	t7 = t7.add(unsigned.uint128_new(c, 0))
-	res.el[7] = t7.lo & fe_masklow_56bits
+	res.el[7] = t7.lo & mask_56bits
 	c = (t7.hi << 8) | (t7.lo >> 56)
 
 	// Reduce top carry using Solinas identity 2^448 = 2^224 + 1
