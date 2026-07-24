@@ -827,34 +827,83 @@ fn fe_reduce(mut x Field) {
 	fe_weak_reduce(mut x)
 }
 
-// fe_weak_reduce performs a single pass of carry propagation across the field.
+// fe_weak_reduce performs carry propagation across the field.
 // It extracts the carry from each limb and adds it to the next higher limb,
 // while applying the Solinas prime reduction on the overflow carry from limb 7.
 @[direct_array_access; inline]
 fn fe_weak_reduce(mut x Field) {
-	// In rare edge cases where upper limbs are near their maximum value
-	// (e.g., right after c[7] reduction addition to el[0] and el[4]),
-	// two carry passes might still leave a single bit overflow in el[0] or el[4].
-	// Exactly 2 passes are mathematically proven to absorb all Solinas carries (2^448 = 2^224 + 1)
-	mut c := u64(0)
-	for _ in 0 .. 2 {
-		for i := 0; i < 8; i++ {
-			s := x.el[i] + c
-			x.el[i] = s & mask_56bits
-			c = s >> limbsize
-		}
-		// Fold carry modulo p = 2^448 - 2^224 - 1
-		x.el[0] += c
-		x.el[4] += c
-		// Reset c to 0 because its value was consumed above.
-		// Pass 2 will now sweep x.el[0..7] and extract any new
-		// limb overflows created by x.el[0] += c and x.el[4] += c.
-		c = 0
-	}
-	// Final ripple for any bit overflowing el[0] or el[4] after pass 2.
-	// The issue: c was just added to x.el[0] and x.el[4], but no subsequent
-	// sweep occurs to handle the case where x.el[0] or x.el[4]
-	// overflow 56 bits as a result of that addition!
+	// Pass 1: Ripple carry across limbs 0..7 and extract Solinas carry c
+	mut c := x.el[0] >> limbsize
+	x.el[0] &= mask_56bits
+
+	c = x.el[1] + c
+	x.el[1] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[2] + c
+	x.el[2] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[3] + c
+	x.el[3] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[4] + c
+	x.el[4] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[5] + c
+	x.el[5] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[6] + c
+	x.el[6] = c & mask_56bits
+	c >>= limbsize
+
+	c = x.el[7] + c
+	x.el[7] = c & mask_56bits
+	c >>= limbsize
+
+	// Fold carry modulo p = 2^448 - 2^224 - 1
+	x.el[0] += c
+	x.el[4] += c
+
+	// Pass 2: Sweep limbs 0..7 for any carry created by x.el[0] += c and x.el[4] += c
+	c = x.el[0] >> limbsize
+	x.el[0] &= mask_56bits
+	x.el[1] += c
+
+	c = x.el[1] >> limbsize
+	x.el[1] &= mask_56bits
+	x.el[2] += c
+
+	c = x.el[2] >> limbsize
+	x.el[2] &= mask_56bits
+	x.el[3] += c
+
+	c = x.el[3] >> limbsize
+	x.el[3] &= mask_56bits
+	x.el[4] += c
+
+	c = x.el[4] >> limbsize
+	x.el[4] &= mask_56bits
+	x.el[5] += c
+
+	c = x.el[5] >> limbsize
+	x.el[5] &= mask_56bits
+	x.el[6] += c
+
+	c = x.el[6] >> limbsize
+	x.el[6] &= mask_56bits
+	x.el[7] += c
+
+	c = x.el[7] >> limbsize
+	x.el[7] &= mask_56bits
+
+	// Final ripple fold for any carry bit overflowing limb 7 after pass 2
+	x.el[0] += c
+	x.el[4] += c
+
 	x.el[1] += x.el[0] >> limbsize
 	x.el[0] &= mask_56bits
 	x.el[5] += x.el[4] >> limbsize

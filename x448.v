@@ -82,54 +82,53 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	}
 	// Step 4: The Montgomery ladder loop.
 	// We iterate bit-by-bit through the 448-bit scalar from the MSB (bit 447) to the LSB (bit 0).
-	// Outer loop sweeps scalar bytes from 55 down to 0; inner loop sweeps bits from 7 down to 0.
-	// The scalar bit only controls the mask passed into fe_cswap; it does not control branches or memory addresses.
-	for byte_idx := 55; byte_idx >= 0; byte_idx-- {
-		sb := s[byte_idx]
-		for bit_idx := 7; bit_idx >= 0; bit_idx-- {
-			// Extract bit at position (byte_idx * 8 + bit_idx)
-			kt := int((sb >> bit_idx) & 1)
+	// This loop has a fixed trip count and fixed scalar-byte indexes for every
+	// iteration. The scalar bit only controls the mask passed into fe_cswap; it
+	// must not control branches or memory addresses.
+	for t := 447; t >= 0; t-- {
+		// Extract the t-th bit of the scalar s. The index is derived only from the
+		// public loop counter, not from secret scalar data.
+		kt := int(s[t / 8] >> (t % 8)) & 1
 
-			// Determine whether the coordinate pairs need to be swapped. The value is
-			// consumed only by fe_cswap, which implements the swap with a word mask.
-			swap ^= kt
+		// Determine whether the coordinate pairs need to be swapped. The value is
+		// consumed only by fe_cswap, which implements the swap with a word mask.
+		swap ^= kt
 
-			// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
-			// if swap is 1. This implements the CSWAP step of the ladder.
-			fe_cswap(mut x2, mut x3, swap)
-			fe_cswap(mut z2, mut z3, swap)
+		// Perform a constant-time swap of the projective coordinate pairs (x2, x3) and (z2, z3)
+		// if swap is 1. This implements the CSWAP step of the ladder.
+		fe_cswap(mut x2, mut x3, swap)
+		fe_cswap(mut z2, mut z3, swap)
 
-			// Update swap flag for the next iteration.
-			swap = kt
+		// Update swap flag for the next iteration.
+		swap = kt
 
-			// Step 4.1: Compute intermediate values for differential addition and doubling.
-			fe_add(mut a, x2, z2) // A = x_2 + z_2
-			fe_sqr(mut aa, a) // AA = A^2
-			fe_sub(mut b, x2, z2) // B = x_2 - z_2
-			fe_sqr(mut bb, b) // BB = B^2
-			fe_sub(mut e, aa, bb) // E = AA - BB (this represents the difference)
+		// Step 4.1: Compute intermediate values for differential addition and doubling.
+		fe_add(mut a, x2, z2) // A = x_2 + z_2
+		fe_sqr(mut aa, a) // AA = A^2
+		fe_sub(mut b, x2, z2) // B = x_2 - z_2
+		fe_sqr(mut bb, b) // BB = B^2
+		fe_sub(mut e, aa, bb) // E = AA - BB (this represents the difference)
 
-			fe_add(mut c, x3, z3) // C = x_3 + z_3
-			fe_sub(mut d, x3, z3) // D = x_3 - z_3
-			fe_mult(mut da, d, a) // DA = D * A
-			fe_mult(mut cb, c, b) // CB = C * B
+		fe_add(mut c, x3, z3) // C = x_3 + z_3
+		fe_sub(mut d, x3, z3) // D = x_3 - z_3
+		fe_mult(mut da, d, a) // DA = D * A
+		fe_mult(mut cb, c, b) // CB = C * B
 
-			// Step 4.2: Perform Point Addition to update (x3, z3)
-			fe_add(mut x3, da, cb) // x_3 = (DA + CB)^2
-			fe_sqr(mut x3, x3)
+		// Step 4.2: Perform Point Addition to update (x3, z3)
+		fe_add(mut x3, da, cb) // x_3 = (DA + CB)^2
+		fe_sqr(mut x3, x3)
 
-			fe_sub(mut z3, da, cb) // z_3 = x_1 * (DA - CB)^2
-			fe_sqr(mut z3, z3)
-			fe_mult(mut z3, z3, x1)
+		fe_sub(mut z3, da, cb) // z_3 = x_1 * (DA - CB)^2
+		fe_sqr(mut z3, z3)
+		fe_mult(mut z3, z3, x1)
 
-			// Step 4.3: Perform Point Doubling to update (x2, z2)
-			fe_mult(mut x2, aa, bb) // x_2 = AA * BB
+		// Step 4.3: Perform Point Doubling to update (x2, z2)
+		fe_mult(mut x2, aa, bb) // x_2 = AA * BB
 
-			// z_2 = E * (AA + a24 * E) where a24 = 39081 for Curve448
-			fe_mult_32(mut z2, e, 39081)
-			fe_add(mut z2, z2, aa)
-			fe_mult(mut z2, z2, e)
-		}
+		// z_2 = E * (AA + a24 * E) where a24 = 39081 for Curve448
+		fe_mult_32(mut z2, e, 39081)
+		fe_add(mut z2, z2, aa)
+		fe_mult(mut z2, z2, e)
 	}
 	// (x₂, x₃) = cswap(swap, x₂, x₃)
 	// (z₂, z₃) = cswap(swap, z₂, z₃)
@@ -161,7 +160,7 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 // or if it encodes a known low-order curve point (u = 0, 1, or p - 1).
 // Note: For standard RFC 7748 ECDH where non-canonical inputs are reduced modulo p, `x448()` can be called directly.
 @[direct_array_access]
-fn validate_point(point []u8) ! {
+pub fn validate_point(point []u8) ! {
 	if point.len != scalar_size {
 		return error('x448: bad point length')
 	}
