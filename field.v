@@ -712,10 +712,15 @@ fn (v Field) is_negative() int {
 // Helpers
 //
 
-// mask_64bits returns u64(max_u64) if cond is 1, and 0 otherwise.
+// mask_64bits returns all-ones if cond is nonzero, all-zeros if cond == 0 --
+// robust to any nonzero encoding of "true" (1, -1, 2, ...), not just exactly
+// 1. Branchless: reuses the same "x | (-x) has its MSB set iff x != 0" trick
+// already used in fe_cmp, so this stays constant-time.
 @[inline]
 fn mask_64bits(cond int) u64 {
-	return u64(0) - u64(cond)
+	c := u64(cond)
+	nz := c | (u64(0) - c)
+	return u64(0) - (nz >> 63)
 }
 
 // shift_right_by56 returns a >> 56. a is assumed to be below 128 bits.

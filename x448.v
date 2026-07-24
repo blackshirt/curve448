@@ -59,10 +59,10 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	mut swap := 0
 
 	// temporary vars
-	mut a, mut aa := new_field(), new_field()
-	mut b, mut bb := new_field(), new_field()
-	mut e, mut c, mut d := new_field(), new_field(), new_field()
-	mut da, mut cb := new_field(), new_field()
+	mut a, mut aa := Field{}, Field{}
+	mut b, mut bb := Field{}, Field{}
+	mut e, mut c, mut d := Field{}, Field{}, Field{}
+	mut da, mut cb := Field{}, Field{}
 	defer {
 		fe_clear(mut a)
 		fe_clear(mut aa)
@@ -130,7 +130,7 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	fe_cswap(mut z2, mut z3, swap)
 
 	// Return x₂ * z₂ᵖ ⁻ ²
-	mut ret := new_field()
+	mut ret := Field{}
 	defer { fe_clear(mut ret) }
 	fe_inverse(mut ret, z2)
 	fe_mult(mut ret, x2, ret)
