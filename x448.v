@@ -19,9 +19,8 @@ const base_point = Field{
 // before used. The second being the representation of a point on Curve448
 // and the output point is encoded into little-endian of 56 bytes.
 // The `x448()` function implements the process described in RFC 7748 (section 5).
-// The `x448()` function does NOT filter out any value from its input;
-// any input sequence of 56 bytes is accepted, even if it encodes a
-// low-order curve point.
+// The `x448()` function accepts any input sequence of 56 bytes and reduces
+// non-canonical inputs modulo p per RFC 7748.
 //
 // See [RFC 7748]: https://datatracker.ietf.org/doc/html/rfc7748
 // Notes: scalar is cloned internally to avoid side-effects (mutating key in memory)
@@ -29,10 +28,6 @@ const base_point = Field{
 pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if scalar.len != scalar_size {
 		return error('x448: bad scalar length')
-	}
-	// TODO: point validation
-	if point.len != scalar_size {
-		return error('x448: bad point length')
 	}
 
 	// Clamping the key
@@ -49,7 +44,7 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	s[55] |= 128
 
 	mut u := Field{}
-	u.set_bytes(point)!
+	u.set_bytes_little_endian(point)!
 	defer {
 		fe_clear(mut u)
 	}
@@ -156,4 +151,22 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 
 	out := ret.bytes()
 	return out
+}
+
+// Helpers for validating point.
+//
+// validate_point validates that `point` is a valid 56-byte canonical, non-low-order point for X448.
+// Returns an error if the point length is invalid (!= 56), if it encodes a non-canonical field element (u >= p),
+// or if it encodes a known low-order curve point (u = 0, 1, or p - 1).
+// Note: For standard RFC 7748 ECDH where non-canonical inputs are reduced modulo p, `x448()` can be called directly.
+@[direct_array_access]
+fn validate_point(point []u8) ! {
+	if point.len != scalar_size {
+		return error('x448: bad point length')
+	}
+	mut u := Field{}
+	u.set_bytes(point) or { return error('x448: non-canonical point') }
+	if fe_cmp(u, fe_zero) == 1 || fe_cmp(u, fe_one) == 1 || fe_cmp(u, fe_prime) == 1 {
+		return error('x448: low order point')
+	}
 }

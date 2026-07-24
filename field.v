@@ -644,6 +644,25 @@ fn (mut z Field) set_bytes(b []u8) ! {
 	}
 }
 
+// set_bytes_little_endian parses little-endian bytes into field limbs and reduces modulo p.
+// RFC 7748 requires X448 implementations to accept non-canonical input bytes (x >= p) and reduce them mod p.
+@[direct_array_access; inline]
+fn (mut z Field) set_bytes_little_endian(b []u8) ! {
+	if b.len != 56 {
+		return error('bad set_bytes input')
+	}
+
+	// Parse little-endian limbs
+	for i := 0; i < 8; i++ {
+		mut limb := u64(0)
+		for j := 0; j < 7; j++ {
+			limb |= u64(b[i * 7 + j]) << (j * 8)
+		}
+		z.el[i] = limb
+	}
+	fe_reduce(mut z)
+}
+
 // Check if field element is in canonical form [0, p-1]
 fn (z Field) is_canonical() bool {
 	// We directly checks individual limbs with z.el[i] > mask_56bits.

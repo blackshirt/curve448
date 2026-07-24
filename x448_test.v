@@ -108,3 +108,40 @@ fn test_rfc7448_4() ! {
 	bob_shared := x448(b, exp_alice_pbk)!
 	assert alice_shared == bob_shared
 }
+
+fn test_validate_point() ! {
+	// 1. Valid base point
+	validate_point(base_point.bytes())!
+
+	// 2. Bad point length
+	validate_point([]u8{len: 55}) or { assert err == error('x448: bad point length') }
+
+	// 3. Low-order points (u = 0, u = 1)
+	zero_point := []u8{len: 56}
+	validate_point(zero_point) or { assert err == error('x448: low order point') }
+
+	mut one_point := []u8{len: 56}
+	one_point[0] = 1
+	validate_point(one_point) or { assert err == error('x448: low order point') }
+
+	// 4. Non-canonical point (all 0xFF = 2^448 - 1 >= p)
+	non_canonical_point := []u8{len: 56, init: 0xff}
+	validate_point(non_canonical_point) or { assert err == error('x448: non-canonical point') }
+
+	// 5. Verify x448 accepts non-canonical point (p + 5) and reduces mod p per RFC 7748
+	k :=
+		hex.decode('3d262fddf9ec8e88495266fea19a34d28882acef045104d0d1aae121700a779c984c24f8cdd78fbff44943eba368f54b29259a4f1c600ad3')!
+	// p + 5 = 2^448 - 2^224 + 4
+	// In 56 bytes little-endian:
+	// bytes 0..27 = 0x04, 0x00, ..., 0x00
+	// bytes 28..55 = 0xff, 0xff, ..., 0xff
+	mut p_plus_5_bytes := []u8{len: 56}
+	p_plus_5_bytes[0] = 0x04
+	for i := 28; i < 56; i++ {
+		p_plus_5_bytes[i] = 0xff
+	}
+
+	out_non_canonical := x448(k, p_plus_5_bytes)!
+	out_canonical := x448(k, base_point.bytes())!
+	assert out_non_canonical == out_canonical
+}
