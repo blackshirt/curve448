@@ -9,17 +9,6 @@ module curve448
 import math.bits
 import math.unsigned
 
-// Field is an an opaque represents the field of 448-bits integer of GF modulo p = 2⁴⁴⁸ - 2²²⁴ - 1.
-// Its represented as unsaturated (redundant) limb in the form of 8 of 56-bits limbs, ie:
-//     t.e0*2⁰ + t.e1*2⁵⁶ + t.e2*2¹¹² + t.e3*2¹⁶⁸ + t.e4*2²²⁴ + t.e5*2²⁸⁰ + t.e6*2³³⁶ + t.e7*2³⁹²
-//
-@[noinit]
-struct Field {
-mut:
-	// Between operations, all limbs are expected to be lower than 2⁵⁷ (ie, fits in 56-bits)
-	el [8]u64
-}
-
 // The size of field limb, in bits
 const limbsize = 56
 // Masking value for field's limb value, ie, 0x00ff_ffff_ffff_ffff
@@ -61,6 +50,17 @@ const fe_4p_limbs = [
 	u64(0x03FF_FFFF_FFFF_FFFC),
 ]!
 
+// Field is an an opaque represents the field of 448-bits integer of GF modulo p = 2⁴⁴⁸ - 2²²⁴ - 1.
+// Its represented as unsaturated (redundant) limb in the form of 8 of 56-bits limbs, ie:
+//     t.e0*2⁰ + t.e1*2⁵⁶ + t.e2*2¹¹² + t.e3*2¹⁶⁸ + t.e4*2²²⁴ + t.e5*2²⁸⁰ + t.e6*2³³⁶ + t.e7*2³⁹²
+//
+@[noinit]
+struct Field {
+mut:
+	// Between operations, all limbs are expected to be lower than 2⁵⁷ (ie, fits in 56-bits)
+	el [8]u64
+}
+
 // fe_clear overwrites a field element in-place. It is intended for best-effort
 // source-level wiping of temporary values that may contain secret-dependent data
 // after use. Strict secure-zeroization guarantees require auditing generated
@@ -72,9 +72,16 @@ fn fe_clear(mut z Field) {
 	}
 }
 
+// fe_clone clones x into z
+@[direct_array_access; inline]
+fn fe_clone(mut z Field, x Field) {
+	for i := 0; i < 8; i++ {
+		z.el[i] = x.el[i]
+	}
+}
+
 // fe_add performs modular field addition: z = a + b (mod p).
 // Direct limb-wise accumulation followed by carry propagation.
-// Safe for in-place operations like fe_add(mut a, a, b).
 @[direct_array_access; inline]
 fn fe_add(mut z Field, a Field, b Field) {
 	// z = a + b
@@ -157,12 +164,179 @@ fn fe_negate(mut z Field, a Field) {
 	fe_weak_reduce(mut z)
 }
 
-// fe_clone clones x into z
+// fe_equal checks whether a == b, return 1 if it true, 0 otherwise
 @[direct_array_access; inline]
-fn fe_clone(mut z Field, x Field) {
+fn fe_equal(a Field, b Field) bool {
+	return fe_cmp(a, b) == 1
+}
+
+// fe_cmp compares the fields between a and b modulo p (fully reduces both first).
+// Returns 1 if a == b (mod p), and 0 otherwise.
+// This function is implemented to run in constant-time.
+@[direct_array_access; inline]
+fn fe_cmp(a Field, b Field) int {
+	// First, reduce both elements to their canonical representation.
+	mut x := a
+	mut y := b
+	fe_reduce(mut x)
+	fe_reduce(mut y)
+
+	// Compare the limbs in constant-time.
+	// Any difference in any limb will set the bits in `c`.
+	mut c := u64(0)
+	// Compare x and y
 	for i := 0; i < 8; i++ {
-		z.el[i] = x.el[i]
+		// Constant time implementation
+		c |= x.el[i] ^ y.el[i]
 	}
+
+	// Return 1 if equal (diff == 0), else 0 in constant-time
+	return int(1 - ((c | (0 - c)) >> 63))
+}
+
+// fe_cselect set z to a if c == 1, and to b if c == 0
+@[direct_array_access; inline]
+fn fe_cselect(mut z Field, a Field, b Field, c int) {
+	m := mask_64bits(c)
+	// Select between a and b
+	for i := 0; i < 8; i++ {
+		// Constant time implementation
+		z.el[i] = (a.el[i] & m) | (b.el[i] & ~m)
+	}
+}
+
+// fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
+@[direct_array_access; inline]
+fn fe_cswap(mut a Field, mut b Field, c int) {
+	// The mask is the all-1 or all-0 word
+	m := mask_64bits(c)
+	mut dummy := u64(0)
+
+	// Conditional swap with constant time implementation
+	for i := 0; i < 8; i++ {
+		dummy = m & (a.el[i] ^ b.el[i])
+		a.el[i] ^= dummy
+		b.el[i] ^= dummy
+	}
+}
+
+// fe_inverse performs modular multiplicative inverse, ie, z = 1/x
+@[direct_array_access; inline]
+fn fe_inverse(mut z Field, x Field) {
+	mut t := Field{}
+	fe_power446(mut t, x)
+	fe_sqr(mut t, t)
+	fe_sqr(mut t, t) // 2^448 - 2^224 - 4
+
+	fe_mult(mut z, t, x) // 2^448 - 2^224 - 3
+}
+
+// fe_power446 sets v = v ⁽ᵖ⁻³⁾/⁴ (mod p), and returns v.
+// where (p-3)/4 is 2⁴⁴⁶ - 2²²² - 1.
+@[direct_array_access; inline]
+fn fe_power446(mut v Field, z Field) {
+	mut t1 := Field{}
+	mut t2 := Field{}
+	mut t3 := Field{}
+
+	fe_sqr(mut t1, z) // 2^1
+	fe_sqr(mut t2, t1) // 2^2
+	fe_mult(mut t3, z, t1) //
+	fe_mult(mut t3, t3, t2) // 2^3 - 1
+
+	mut t6 := Field{} //
+	fe_sqr(mut t6, t3)
+	fe_sqr(mut t6, t6)
+	fe_sqr(mut t6, t6)
+	fe_mult(mut t6, t6, t3) // 2^6 - 1
+
+	mut t9 := Field{}
+	fe_sqr(mut t9, t6)
+	fe_sqr(mut t9, t9)
+	fe_sqr(mut t9, t9)
+	fe_mult(mut t9, t9, t3) // 2^9 - 1
+
+	mut t18 := Field{}
+	fe_sqr(mut t18, t9)
+	for i := 1; i < 9; i++ {
+		fe_sqr(mut t18, t18)
+	}
+	fe_mult(mut t18, t18, t9) // 2^18 - 1
+
+	mut t37 := Field{}
+	fe_sqr(mut t37, t18)
+	for i := 1; i < 18; i++ {
+		fe_sqr(mut t37, t37)
+	}
+	fe_mult(mut t37, t37, t18)
+	fe_sqr(mut t37, t37)
+	fe_mult(mut t37, t37, z) // 2^37 - 1
+
+	mut t111 := Field{}
+	fe_sqr(mut t111, t37)
+	for i := 1; i < 37; i++ {
+		fe_sqr(mut t111, t111)
+	}
+	fe_mult(mut t111, t111, t37)
+	for i := 0; i < 37; i++ {
+		fe_sqr(mut t111, t111)
+	}
+	fe_mult(mut t111, t111, t37) // 2^111 - 1
+
+	mut t222 := Field{}
+	fe_sqr(mut t222, t111)
+	for i := 1; i < 111; i++ {
+		fe_sqr(mut t222, t222)
+	}
+	fe_mult(mut t222, t222, t111) // 2^222 - 1
+
+	mut t223 := Field{}
+	fe_sqr(mut t223, t222)
+	fe_mult(mut t223, t223, z) // 2^223 - 1
+
+	mut x := Field{}
+	fe_sqr(mut x, t223)
+	for i := 1; i < 223; i++ {
+		fe_sqr(mut x, x)
+	}
+	fe_mult(mut v, x, t222) // 2^446 - 2^222 - 1
+}
+
+// If u/v is square, fe_sqrtratio computes the square root r and returns (r, 1).
+// If u/v is not a square, it returns (r, 0).
+// In both cases, r is set to u * (u*v)^((p-3)/4) (mod p).
+@[direct_array_access; inline]
+fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
+	mut uv := Field{}
+	fe_mult(mut uv, u, v)
+	fe_power446(mut uv, uv)
+	fe_mult(mut r, u, uv)
+
+	// Check if v * r^2 == u
+	mut ck := Field{}
+	fe_sqr(mut ck, r)
+	fe_mult(mut ck, v, ck)
+
+	is_square := fe_cmp(ck, u)
+
+	return r, is_square
+}
+
+// fe_abs return absolute value of u, ie, |u| (mod p)
+@[direct_array_access; inline]
+fn fe_abs(mut z Field, u Field) {
+	mut x := Field{}
+	fe_negate(mut x, u)
+	fe_cselect(mut z, x, u, u.is_negative())
+}
+
+// is_negative tells whether this field is negative.
+@[direct_array_access; inline]
+fn (v Field) is_negative() int {
+	mut x := Field{}
+	fe_clone(mut x, v)
+	fe_reduce(mut x)
+	return int(x.el[0] & 1)
 }
 
 // fe_mult multiplies a with b and stores into z, ie, z = a * b (mod p)
@@ -254,6 +428,12 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	// clear_uint128x7(mut z1)
 	// clear_uint128x7(mut z2)
 	// clear_uint128x15(mut r)
+}
+
+// square squares a field, ie, z = a*a (mod p)
+@[direct_array_access; inline]
+fn fe_sqr(mut z Field, a Field) {
+	fe_sqr_karatsuba(mut z, a)
 }
 
 // fe_sqr_karatsuba squares a field element using a dedicated squaring path,
@@ -348,10 +528,73 @@ fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u
 	// clear_u64x4(mut x)
 }
 
-// square squares a field, ie, z = a*a (mod p)
+// mul_4limb_schoolbook performs 4x4 limb schoolbook multiplication into a 7-element Uint128 array.
 @[direct_array_access; inline]
-fn fe_sqr(mut z Field, a Field) {
-	fe_sqr_karatsuba(mut z, a)
+fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
+	// This routine accepts mut out [7]unsigned.Uint128, but it accumulates (add_128)
+	// into out[i + j] without zeroing out first.
+	// If out contains uninitialized memory or previous stack junk,
+	// the products will be corrupted. so we initialize out to zero
+	clear_uint128x7(mut out)
+	mut x := [x0, x1, x2, x3]!
+	mut y := [y0, y1, y2, y3]!
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
+		}
+	}
+	// clear_u64x4(mut x)
+	// clear_u64x4(mut y)
+}
+
+// reduce_8limb_product reduces 8 128-bit accumulators down to an 8-limb 56-bit field element.
+//
+// Sequentially extracts full 128-bit carries (`(hi << 8) | (lo >> 56)`) to ensure zero
+// upper-bit truncation before applying final Solinas reduction.
+@[direct_array_access; inline]
+fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
+	mut res := Field{}
+	mut c := u64(0)
+
+	// Step-by-step carry extraction across 128-bit limb accumulators
+	t0 = t0.add(unsigned.uint128_new(c, 0))
+	res.el[0] = t0.lo & mask_56bits
+	c = (t0.hi << 8) | (t0.lo >> 56)
+
+	t1 = t1.add(unsigned.uint128_new(c, 0))
+	res.el[1] = t1.lo & mask_56bits
+	c = (t1.hi << 8) | (t1.lo >> 56)
+
+	t2 = t2.add(unsigned.uint128_new(c, 0))
+	res.el[2] = t2.lo & mask_56bits
+	c = (t2.hi << 8) | (t2.lo >> 56)
+
+	t3 = t3.add(unsigned.uint128_new(c, 0))
+	res.el[3] = t3.lo & mask_56bits
+	c = (t3.hi << 8) | (t3.lo >> 56)
+
+	t4 = t4.add(unsigned.uint128_new(c, 0))
+	res.el[4] = t4.lo & mask_56bits
+	c = (t4.hi << 8) | (t4.lo >> 56)
+
+	t5 = t5.add(unsigned.uint128_new(c, 0))
+	res.el[5] = t5.lo & mask_56bits
+	c = (t5.hi << 8) | (t5.lo >> 56)
+
+	t6 = t6.add(unsigned.uint128_new(c, 0))
+	res.el[6] = t6.lo & mask_56bits
+	c = (t6.hi << 8) | (t6.lo >> 56)
+
+	t7 = t7.add(unsigned.uint128_new(c, 0))
+	res.el[7] = t7.lo & mask_56bits
+	c = (t7.hi << 8) | (t7.lo >> 56)
+
+	// Reduce top carry using Solinas identity 2^448 = 2^224 + 1
+	res.el[0] += c
+	res.el[4] += c
+
+	fe_weak_reduce(mut res)
+	fe_clone(mut z, res)
 }
 
 // fe_mult_32 multiplies x with u32 (mod p)
@@ -527,180 +770,6 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[4] &= mask_56bits
 }
 
-// fe_equal checks whether a == b, return 1 if it true, 0 otherwise
-@[direct_array_access; inline]
-fn fe_equal(a Field, b Field) bool {
-	return fe_cmp(a, b) == 1
-}
-
-// fe_cmp compares the fields between a and b modulo p (fully reduces both first).
-// Returns 1 if a == b (mod p), and 0 otherwise.
-// This function is implemented to run in constant-time.
-@[direct_array_access; inline]
-fn fe_cmp(a Field, b Field) int {
-	// First, reduce both elements to their canonical representation.
-	mut x := a
-	mut y := b
-	fe_reduce(mut x)
-	fe_reduce(mut y)
-
-	// Compare the limbs in constant-time.
-	// Any difference in any limb will set the bits in `c`.
-	mut c := u64(0)
-	// Compare x and y
-	for i := 0; i < 8; i++ {
-		// Constant time implementation
-		c |= x.el[i] ^ y.el[i]
-	}
-
-	// Return 1 if equal (diff == 0), else 0 in constant-time
-	return int(1 - ((c | (0 - c)) >> 63))
-}
-
-// fe_cselect set z to a if c == 1, and to b if c == 0
-@[direct_array_access; inline]
-fn fe_cselect(mut z Field, a Field, b Field, c int) {
-	m := mask_64bits(c)
-	// Select between a and b
-	for i := 0; i < 8; i++ {
-		// Constant time implementation
-		z.el[i] = (a.el[i] & m) | (b.el[i] & ~m)
-	}
-}
-
-// fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
-@[direct_array_access; inline]
-fn fe_cswap(mut a Field, mut b Field, c int) {
-	// The mask is the all-1 or all-0 word
-	m := mask_64bits(c)
-	mut dummy := u64(0)
-
-	// Conditional swap with constant time implementation
-	for i := 0; i < 8; i++ {
-		dummy = m & (a.el[i] ^ b.el[i])
-		a.el[i] ^= dummy
-		b.el[i] ^= dummy
-	}
-}
-
-// fe_inverse performs modular multiplicative inverse, ie, z = 1/x
-@[direct_array_access; inline]
-fn fe_inverse(mut z Field, x Field) {
-	mut t := Field{}
-	fe_power446(mut t, x)
-	fe_sqr(mut t, t)
-	fe_sqr(mut t, t) // 2^448 - 2^224 - 4
-
-	fe_mult(mut z, t, x) // 2^448 - 2^224 - 3
-}
-
-// fe_power446 sets v = v ⁽ᵖ⁻³⁾/⁴ (mod p), and returns v.
-// where (p-3)/4 is 2⁴⁴⁶ - 2²²² - 1.
-@[direct_array_access; inline]
-fn fe_power446(mut v Field, z Field) {
-	mut t1 := Field{}
-	mut t2 := Field{}
-	mut t3 := Field{}
-
-	fe_sqr(mut t1, z) // 2^1
-	fe_sqr(mut t2, t1) // 2^2
-	fe_mult(mut t3, z, t1) //
-	fe_mult(mut t3, t3, t2) // 2^3 - 1
-
-	mut t6 := Field{} //
-	fe_sqr(mut t6, t3)
-	fe_sqr(mut t6, t6)
-	fe_sqr(mut t6, t6)
-	fe_mult(mut t6, t6, t3) // 2^6 - 1
-
-	mut t9 := Field{}
-	fe_sqr(mut t9, t6)
-	fe_sqr(mut t9, t9)
-	fe_sqr(mut t9, t9)
-	fe_mult(mut t9, t9, t3) // 2^9 - 1
-
-	mut t18 := Field{}
-	fe_sqr(mut t18, t9)
-	for i := 1; i < 9; i++ {
-		fe_sqr(mut t18, t18)
-	}
-	fe_mult(mut t18, t18, t9) // 2^18 - 1
-
-	mut t37 := Field{}
-	fe_sqr(mut t37, t18)
-	for i := 1; i < 18; i++ {
-		fe_sqr(mut t37, t37)
-	}
-	fe_mult(mut t37, t37, t18)
-	fe_sqr(mut t37, t37)
-	fe_mult(mut t37, t37, z) // 2^37 - 1
-
-	mut t111 := Field{}
-	fe_sqr(mut t111, t37)
-	for i := 1; i < 37; i++ {
-		fe_sqr(mut t111, t111)
-	}
-	fe_mult(mut t111, t111, t37)
-	for i := 0; i < 37; i++ {
-		fe_sqr(mut t111, t111)
-	}
-	fe_mult(mut t111, t111, t37) // 2^111 - 1
-
-	mut t222 := Field{}
-	fe_sqr(mut t222, t111)
-	for i := 1; i < 111; i++ {
-		fe_sqr(mut t222, t222)
-	}
-	fe_mult(mut t222, t222, t111) // 2^222 - 1
-
-	mut t223 := Field{}
-	fe_sqr(mut t223, t222)
-	fe_mult(mut t223, t223, z) // 2^223 - 1
-
-	mut x := Field{}
-	fe_sqr(mut x, t223)
-	for i := 1; i < 223; i++ {
-		fe_sqr(mut x, x)
-	}
-	fe_mult(mut v, x, t222) // 2^446 - 2^222 - 1
-}
-
-// If u/v is square, fe_sqrtratio computes the square root r and returns (r, 1).
-// If u/v is not a square, it returns (r, 0).
-// In both cases, r is set to u * (u*v)^((p-3)/4) (mod p).
-@[direct_array_access; inline]
-fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
-	mut uv := Field{}
-	fe_mult(mut uv, u, v)
-	fe_power446(mut uv, uv)
-	fe_mult(mut r, u, uv)
-
-	// Check if v * r^2 == u
-	mut ck := Field{}
-	fe_sqr(mut ck, r)
-	fe_mult(mut ck, v, ck)
-
-	is_square := fe_cmp(ck, u)
-
-	return r, is_square
-}
-
-// fe_abs return absolute value of u, ie, |u| (mod p)
-@[direct_array_access; inline]
-fn fe_abs(mut z Field, u Field) {
-	mut x := Field{}
-	fe_negate(mut x, u)
-	fe_cselect(mut z, x, u, u.is_negative())
-}
-
-@[direct_array_access; inline]
-fn (v Field) is_negative() int {
-	mut x := Field{}
-	fe_clone(mut x, v)
-	fe_reduce(mut x)
-	return int(x.el[0] & 1)
-}
-
 // Helpers
 //
 
@@ -749,75 +818,6 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 	lo, borrow := bits.sub_64(a.lo, b.lo, 0)
 	hi, _ := bits.sub_64(a.hi, b.hi, borrow)
 	return unsigned.uint128_new(lo, hi)
-}
-
-// mul_4limb_schoolbook performs 4x4 limb schoolbook multiplication into a 7-element Uint128 array.
-@[direct_array_access; inline]
-fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	// This routine accepts mut out [7]unsigned.Uint128, but it accumulates (add_128)
-	// into out[i + j] without zeroing out first.
-	// If out contains uninitialized memory or previous stack junk,
-	// the products will be corrupted. so we initialize out to zero
-	clear_uint128x7(mut out)
-	mut x := [x0, x1, x2, x3]!
-	mut y := [y0, y1, y2, y3]!
-	for i := 0; i < 4; i++ {
-		for j := 0; j < 4; j++ {
-			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
-		}
-	}
-	// clear_u64x4(mut x)
-	// clear_u64x4(mut y)
-}
-
-// reduce_8limb_product reduces 8 128-bit accumulators down to an 8-limb 56-bit field element.
-//
-// Sequentially extracts full 128-bit carries (`(hi << 8) | (lo >> 56)`) to ensure zero
-// upper-bit truncation before applying final Solinas reduction.
-@[direct_array_access; inline]
-fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
-	mut res := Field{}
-	mut c := u64(0)
-
-	// Step-by-step carry extraction across 128-bit limb accumulators
-	t0 = t0.add(unsigned.uint128_new(c, 0))
-	res.el[0] = t0.lo & mask_56bits
-	c = (t0.hi << 8) | (t0.lo >> 56)
-
-	t1 = t1.add(unsigned.uint128_new(c, 0))
-	res.el[1] = t1.lo & mask_56bits
-	c = (t1.hi << 8) | (t1.lo >> 56)
-
-	t2 = t2.add(unsigned.uint128_new(c, 0))
-	res.el[2] = t2.lo & mask_56bits
-	c = (t2.hi << 8) | (t2.lo >> 56)
-
-	t3 = t3.add(unsigned.uint128_new(c, 0))
-	res.el[3] = t3.lo & mask_56bits
-	c = (t3.hi << 8) | (t3.lo >> 56)
-
-	t4 = t4.add(unsigned.uint128_new(c, 0))
-	res.el[4] = t4.lo & mask_56bits
-	c = (t4.hi << 8) | (t4.lo >> 56)
-
-	t5 = t5.add(unsigned.uint128_new(c, 0))
-	res.el[5] = t5.lo & mask_56bits
-	c = (t5.hi << 8) | (t5.lo >> 56)
-
-	t6 = t6.add(unsigned.uint128_new(c, 0))
-	res.el[6] = t6.lo & mask_56bits
-	c = (t6.hi << 8) | (t6.lo >> 56)
-
-	t7 = t7.add(unsigned.uint128_new(c, 0))
-	res.el[7] = t7.lo & mask_56bits
-	c = (t7.hi << 8) | (t7.lo >> 56)
-
-	// Reduce top carry using Solinas identity 2^448 = 2^224 + 1
-	res.el[0] += c
-	res.el[4] += c
-
-	fe_weak_reduce(mut res)
-	fe_clone(mut z, res)
 }
 
 @[direct_array_access; inline]
