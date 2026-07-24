@@ -99,38 +99,52 @@ fn fe_add(mut z Field, a Field, b Field) {
 }
 
 // fe_sub performs modular field subtraction: z = a - b (mod p).
-// To prevent underflow, it first adds 2 * p (a multiple of the modulus) to a,
-// subtracts b, extracts the carries, and applies a reduction step.
+// To prevent underflow, it first adds 4 * p to a, subtracts b,
+// extracts the carries, and applies a reduction step.
 @[direct_array_access; inline]
 fn fe_sub(mut z Field, a Field, b Field) {
-	// c holds the carry/borrow bits extracted from each limb subtraction.
-	mut c := [8]u64{}
+	z0 := (a.el[0] + fe_4p_limbs[0]) - b.el[0]
+	c0 := z0 >> limbsize
+	z.el[0] = z0 & mask_56bits
 
-	// Step 1: Perform subtraction with biased limbs.
-	// Since a.el[i] could be smaller than b.el[i], a direct subtraction could underflow
-	// and wrap around. To guarantee that the result remains positive and fits in u64,
-	// we add 2 * p.el[i] (which is at least 2^57 - 4) to a.el[i] before subtracting b.el[i].
-	// We then extract the carry (which acts as a borrow flag) and mask the limb.
-	// UPDATED: use 4*p instead of 2*p
-	for i := 0; i < 8; i++ {
-		// add by 4 * p.el[i]
-		z.el[i] = (a.el[i] + fe_4p_limbs[i]) - b.el[i]
-		c[i] = z.el[i] >> limbsize
-		z.el[i] = z.el[i] & mask_56bits
-	}
+	z1 := (a.el[1] + fe_4p_limbs[1]) - b.el[1]
+	c1 := z1 >> limbsize
+	z.el[1] = z1 & mask_56bits
 
-	// Step 2: Apply the modular reduction.
-	// Just like in addition, any carry from the highest limb (c[7]) represents
-	// 2^448. We reduce it by adding c[7] to limb 0 (representing 2^0) and limb 4
-	// (representing 2^224).
-	z.el[0] += c[7]
-	z.el[4] += c[7]
+	z2 := (a.el[2] + fe_4p_limbs[2]) - b.el[2]
+	c2 := z2 >> limbsize
+	z.el[2] = z2 & mask_56bits
 
-	// Step 3: Propagate the carries.
-	// Add the carry bit from the previous limb to the current limb.
-	for i := 1; i < 8; i++ {
-		z.el[i] += c[i - 1]
-	}
+	z3 := (a.el[3] + fe_4p_limbs[3]) - b.el[3]
+	c3 := z3 >> limbsize
+	z.el[3] = z3 & mask_56bits
+
+	z4 := (a.el[4] + fe_4p_limbs[4]) - b.el[4]
+	c4 := z4 >> limbsize
+	z.el[4] = z4 & mask_56bits
+
+	z5 := (a.el[5] + fe_4p_limbs[5]) - b.el[5]
+	c5 := z5 >> limbsize
+	z.el[5] = z5 & mask_56bits
+
+	z6 := (a.el[6] + fe_4p_limbs[6]) - b.el[6]
+	c6 := z6 >> limbsize
+	z.el[6] = z6 & mask_56bits
+
+	z7 := (a.el[7] + fe_4p_limbs[7]) - b.el[7]
+	c7 := z7 >> limbsize
+	z.el[7] = z7 & mask_56bits
+
+	z.el[0] += c7
+	z.el[4] += c7
+
+	z.el[1] += c0
+	z.el[2] += c1
+	z.el[3] += c2
+	z.el[4] += c3
+	z.el[5] += c4
+	z.el[6] += c5
+	z.el[7] += c6
 
 	fe_weak_reduce(mut z)
 }
@@ -141,26 +155,49 @@ fn fe_sub(mut z Field, a Field, b Field) {
 // per-limb bound, which is too thin.
 @[direct_array_access; inline]
 fn fe_negate(mut z Field, a Field) {
-	// Step 1: Subtract each limb of a from 4 * p.
-	for i := 0; i < 8; i++ {
-		z.el[i] = fe_4p_limbs[i] - a.el[i]
-	}
+	z0 := fe_4p_limbs[0] - a.el[0]
+	c0 := z0 >> limbsize
+	z.el[0] = z0 & mask_56bits
 
-	// Step 2: Extract and propagate the carries.
-	mut c := [8]u64{}
-	for i := 0; i < 8; i++ {
-		c[i] = z.el[i] >> limbsize
-		z.el[i] = (z.el[i] & mask_56bits)
-	}
-	// Step 3: Apply modular reduction using the Solinas prime identity:
-	//     2^448 = 2^224 + 1 (mod p)
-	z.el[0] += c[7]
-	z.el[4] += c[7]
-	// Step 4: Propagate the carries to higher limbs.
-	for i := 1; i < 8; i++ {
-		z.el[i] += c[i - 1]
-	}
-	// final carry
+	z1 := fe_4p_limbs[1] - a.el[1]
+	c1 := z1 >> limbsize
+	z.el[1] = z1 & mask_56bits
+
+	z2 := fe_4p_limbs[2] - a.el[2]
+	c2 := z2 >> limbsize
+	z.el[2] = z2 & mask_56bits
+
+	z3 := fe_4p_limbs[3] - a.el[3]
+	c3 := z3 >> limbsize
+	z.el[3] = z3 & mask_56bits
+
+	z4 := fe_4p_limbs[4] - a.el[4]
+	c4 := z4 >> limbsize
+	z.el[4] = z4 & mask_56bits
+
+	z5 := fe_4p_limbs[5] - a.el[5]
+	c5 := z5 >> limbsize
+	z.el[5] = z5 & mask_56bits
+
+	z6 := fe_4p_limbs[6] - a.el[6]
+	c6 := z6 >> limbsize
+	z.el[6] = z6 & mask_56bits
+
+	z7 := fe_4p_limbs[7] - a.el[7]
+	c7 := z7 >> limbsize
+	z.el[7] = z7 & mask_56bits
+
+	z.el[0] += c7
+	z.el[4] += c7
+
+	z.el[1] += c0
+	z.el[2] += c1
+	z.el[3] += c2
+	z.el[4] += c3
+	z.el[5] += c4
+	z.el[6] += c5
+	z.el[7] += c6
+
 	fe_weak_reduce(mut z)
 }
 
@@ -184,11 +221,14 @@ fn fe_cmp(a Field, b Field) int {
 	// Compare the limbs in constant-time.
 	// Any difference in any limb will set the bits in `c`.
 	mut c := u64(0)
-	// Compare x and y
-	for i := 0; i < 8; i++ {
-		// Constant time implementation
-		c |= x.el[i] ^ y.el[i]
-	}
+	c |= x.el[0] ^ y.el[0]
+	c |= x.el[1] ^ y.el[1]
+	c |= x.el[2] ^ y.el[2]
+	c |= x.el[3] ^ y.el[3]
+	c |= x.el[4] ^ y.el[4]
+	c |= x.el[5] ^ y.el[5]
+	c |= x.el[6] ^ y.el[6]
+	c |= x.el[7] ^ y.el[7]
 
 	// Return 1 if equal (diff == 0), else 0 in constant-time
 	return int(1 - ((c | (0 - c)) >> 63))
@@ -198,26 +238,52 @@ fn fe_cmp(a Field, b Field) int {
 @[direct_array_access; inline]
 fn fe_cselect(mut z Field, a Field, b Field, c int) {
 	m := mask_64bits(c)
-	// Select between a and b
-	for i := 0; i < 8; i++ {
-		// Constant time implementation
-		z.el[i] = (a.el[i] & m) | (b.el[i] & ~m)
-	}
+	z.el[0] = (a.el[0] & m) | (b.el[0] & ~m)
+	z.el[1] = (a.el[1] & m) | (b.el[1] & ~m)
+	z.el[2] = (a.el[2] & m) | (b.el[2] & ~m)
+	z.el[3] = (a.el[3] & m) | (b.el[3] & ~m)
+	z.el[4] = (a.el[4] & m) | (b.el[4] & ~m)
+	z.el[5] = (a.el[5] & m) | (b.el[5] & ~m)
+	z.el[6] = (a.el[6] & m) | (b.el[6] & ~m)
+	z.el[7] = (a.el[7] & m) | (b.el[7] & ~m)
 }
 
 // fe_cswap perform constant-time conditional swap, ie, swaps a and b if c == 1 or leaves them unchanged if c == 0.
 @[direct_array_access; inline]
 fn fe_cswap(mut a Field, mut b Field, c int) {
-	// The mask is the all-1 or all-0 word
 	m := mask_64bits(c)
-	mut dummy := u64(0)
+	// Use field unrolling directly
+	d0 := m & (a.el[0] ^ b.el[0])
+	a.el[0] ^= d0
+	b.el[0] ^= d0
 
-	// Conditional swap with constant time implementation
-	for i := 0; i < 8; i++ {
-		dummy = m & (a.el[i] ^ b.el[i])
-		a.el[i] ^= dummy
-		b.el[i] ^= dummy
-	}
+	d1 := m & (a.el[1] ^ b.el[1])
+	a.el[1] ^= d1
+	b.el[1] ^= d1
+
+	d2 := m & (a.el[2] ^ b.el[2])
+	a.el[2] ^= d2
+	b.el[2] ^= d2
+
+	d3 := m & (a.el[3] ^ b.el[3])
+	a.el[3] ^= d3
+	b.el[3] ^= d3
+
+	d4 := m & (a.el[4] ^ b.el[4])
+	a.el[4] ^= d4
+	b.el[4] ^= d4
+
+	d5 := m & (a.el[5] ^ b.el[5])
+	a.el[5] ^= d5
+	b.el[5] ^= d5
+
+	d6 := m & (a.el[6] ^ b.el[6])
+	a.el[6] ^= d6
+	b.el[6] ^= d6
+
+	d7 := m & (a.el[7] ^ b.el[7])
+	a.el[7] ^= d7
+	b.el[7] ^= d7
 }
 
 // fe_inverse performs modular multiplicative inverse, ie, z = 1/x
@@ -507,7 +573,6 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // 7-element Uint128 array. Diagonal terms x[i]*x[i] contribute once; cross
 // terms x[i]*x[j] (i != j) are equal for (i,j) and (j,i) in a general
 // product, so here they are computed once (i<j) and doubled via a 1-bit
-// left shift instead of a second multiplication.
 // Note: 10 word multiplications (4 diagonal + 6 cross) instead of the 16 that
 // mul_4limb_schoolbook(x, x) would perform.
 //
@@ -516,35 +581,45 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // V zero-initializes that on declaration, so no redundant clear is done here).
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
-	mut x := [x0, x1, x2, x3]!
-	for i := 0; i < 4; i++ {
-		out[2 * i] = add_128(out[2 * i], mult_64(x[i], x[i]))
-	}
-	for i := 0; i < 4; i++ {
-		for j := i + 1; j < 4; j++ {
-			out[i + j] = add_128(out[i + j], lsh_128(mult_64(x[i], x[j])))
-		}
-	}
-	// clear_u64x4(mut x)
+	// Diagonals: x_i^2
+	out[0] = add_128(out[0], mult_64(x0, x0))
+	out[2] = add_128(out[2], mult_64(x1, x1))
+	out[4] = add_128(out[4], mult_64(x2, x2))
+	out[6] = add_128(out[6], mult_64(x3, x3))
+
+	// Cross terms: 2 * (x_i * x_j) for i < j
+	out[1] = add_128(out[1], lsh_128(mult_64(x0, x1)))
+	out[2] = add_128(out[2], lsh_128(mult_64(x0, x2)))
+	out[3] = add_128(out[3], lsh_128(mult_64(x0, x3)))
+	out[3] = add_128(out[3], lsh_128(mult_64(x1, x2)))
+	out[4] = add_128(out[4], lsh_128(mult_64(x1, x3)))
+	out[5] = add_128(out[5], lsh_128(mult_64(x2, x3)))
 }
 
 // mul_4limb_schoolbook performs 4x4 limb schoolbook multiplication into a 7-element Uint128 array.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	// This routine accepts mut out [7]unsigned.Uint128, but it accumulates (add_128)
-	// into out[i + j] without zeroing out first.
-	// If out contains uninitialized memory or previous stack junk,
-	// the products will be corrupted. so we initialize out to zero
 	clear_uint128x7(mut out)
-	mut x := [x0, x1, x2, x3]!
-	mut y := [y0, y1, y2, y3]!
-	for i := 0; i < 4; i++ {
-		for j := 0; j < 4; j++ {
-			out[i + j] = add_128(out[i + j], mult_64(x[i], y[j]))
-		}
-	}
-	// clear_u64x4(mut x)
-	// clear_u64x4(mut y)
+
+	out[0] = add_128(out[0], mult_64(x0, y0))
+	out[1] = add_128(out[1], mult_64(x0, y1))
+	out[2] = add_128(out[2], mult_64(x0, y2))
+	out[3] = add_128(out[3], mult_64(x0, y3))
+
+	out[1] = add_128(out[1], mult_64(x1, y0))
+	out[2] = add_128(out[2], mult_64(x1, y1))
+	out[3] = add_128(out[3], mult_64(x1, y2))
+	out[4] = add_128(out[4], mult_64(x1, y3))
+
+	out[2] = add_128(out[2], mult_64(x2, y0))
+	out[3] = add_128(out[3], mult_64(x2, y1))
+	out[4] = add_128(out[4], mult_64(x2, y2))
+	out[5] = add_128(out[5], mult_64(x2, y3))
+
+	out[3] = add_128(out[3], mult_64(x3, y0))
+	out[4] = add_128(out[4], mult_64(x3, y1))
+	out[5] = add_128(out[5], mult_64(x3, y2))
+	out[6] = add_128(out[6], mult_64(x3, y3))
 }
 
 // reduce_8limb_product reduces 8 128-bit accumulators down to an 8-limb 56-bit field element.
@@ -552,49 +627,54 @@ fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 
 // Sequentially extracts full 128-bit carries (`(hi << 8) | (lo >> 56)`) to ensure zero
 // upper-bit truncation before applying final Solinas reduction.
 @[direct_array_access; inline]
-fn reduce_8limb_product(mut z Field, mut t0 unsigned.Uint128, mut t1 unsigned.Uint128, mut t2 unsigned.Uint128, mut t3 unsigned.Uint128, mut t4 unsigned.Uint128, mut t5 unsigned.Uint128, mut t6 unsigned.Uint128, mut t7 unsigned.Uint128) {
-	mut res := Field{}
+fn reduce_8limb_product(mut z Field, t0 unsigned.Uint128, t1 unsigned.Uint128, t2 unsigned.Uint128, t3 unsigned.Uint128, t4 unsigned.Uint128, t5 unsigned.Uint128, t6 unsigned.Uint128, t7 unsigned.Uint128) {
 	mut c := u64(0)
 
 	// Step-by-step carry extraction across 128-bit limb accumulators
-	t0 = t0.add(unsigned.uint128_new(c, 0))
-	res.el[0] = t0.lo & mask_56bits
-	c = (t0.hi << 8) | (t0.lo >> 56)
+	lo0, hi0 := add_u64_to_128(t0, c)
+	z.el[0] = lo0 & mask_56bits
+	c = (hi0 << 8) | (lo0 >> 56)
 
-	t1 = t1.add(unsigned.uint128_new(c, 0))
-	res.el[1] = t1.lo & mask_56bits
-	c = (t1.hi << 8) | (t1.lo >> 56)
+	lo1, hi1 := add_u64_to_128(t1, c)
+	z.el[1] = lo1 & mask_56bits
+	c = (hi1 << 8) | (lo1 >> 56)
 
-	t2 = t2.add(unsigned.uint128_new(c, 0))
-	res.el[2] = t2.lo & mask_56bits
-	c = (t2.hi << 8) | (t2.lo >> 56)
+	lo2, hi2 := add_u64_to_128(t2, c)
+	z.el[2] = lo2 & mask_56bits
+	c = (hi2 << 8) | (lo2 >> 56)
 
-	t3 = t3.add(unsigned.uint128_new(c, 0))
-	res.el[3] = t3.lo & mask_56bits
-	c = (t3.hi << 8) | (t3.lo >> 56)
+	lo3, hi3 := add_u64_to_128(t3, c)
+	z.el[3] = lo3 & mask_56bits
+	c = (hi3 << 8) | (lo3 >> 56)
 
-	t4 = t4.add(unsigned.uint128_new(c, 0))
-	res.el[4] = t4.lo & mask_56bits
-	c = (t4.hi << 8) | (t4.lo >> 56)
+	lo4, hi4 := add_u64_to_128(t4, c)
+	z.el[4] = lo4 & mask_56bits
+	c = (hi4 << 8) | (lo4 >> 56)
 
-	t5 = t5.add(unsigned.uint128_new(c, 0))
-	res.el[5] = t5.lo & mask_56bits
-	c = (t5.hi << 8) | (t5.lo >> 56)
+	lo5, hi5 := add_u64_to_128(t5, c)
+	z.el[5] = lo5 & mask_56bits
+	c = (hi5 << 8) | (lo5 >> 56)
 
-	t6 = t6.add(unsigned.uint128_new(c, 0))
-	res.el[6] = t6.lo & mask_56bits
-	c = (t6.hi << 8) | (t6.lo >> 56)
+	lo6, hi6 := add_u64_to_128(t6, c)
+	z.el[6] = lo6 & mask_56bits
+	c = (hi6 << 8) | (lo6 >> 56)
 
-	t7 = t7.add(unsigned.uint128_new(c, 0))
-	res.el[7] = t7.lo & mask_56bits
-	c = (t7.hi << 8) | (t7.lo >> 56)
+	lo7, hi7 := add_u64_to_128(t7, c)
+	z.el[7] = lo7 & mask_56bits
+	c = (hi7 << 8) | (lo7 >> 56)
 
 	// Reduce top carry using Solinas identity 2^448 = 2^224 + 1
-	res.el[0] += c
-	res.el[4] += c
+	z.el[0] += c
+	z.el[4] += c
 
-	fe_weak_reduce(mut res)
-	fe_clone(mut z, res)
+	fe_weak_reduce(mut z)
+}
+
+@[inline]
+fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
+	lo := t.lo + c
+	hi := t.hi + if lo < c { u64(1) } else { u64(0) }
+	return lo, hi
 }
 
 // fe_mult_32 multiplies x with u32 (mod p)
@@ -876,5 +956,5 @@ fn fold_and_reduce_15limb(mut z Field, r [15]unsigned.Uint128) {
 	mut t7 := add_128(r[7], r[11])
 
 	// Pass accumulators to the 128-bit -> 56-bit carry sweep and reduction
-	reduce_8limb_product(mut z, mut t0, mut t1, mut t2, mut t3, mut t4, mut t5, mut t6, mut t7)
+	reduce_8limb_product(mut z, t0, t1, t2, t3, t4, t5, t6, t7)
 }
