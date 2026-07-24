@@ -682,6 +682,10 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 	mul_4limb_schoolbook_square(mut z1, x01_0, x01_1, x01_2, x01_3)
 
 	// Bias to ensure non-negative subtraction.
+	// Adding bias 2^120 to each 128-bit limb accumulator guarantees that the result
+	// stays non-negative before doing unsigned 128-bit subtraction, while placing
+	// the bias high enough (at bit 120) so it doesn't interfere with or
+	// overflow the lower 56-bit limb data.
 	bias := unsigned.uint128_new(0, u64(1) << 56)
 
 	for i := 0; i < 7; i++ {
@@ -720,20 +724,22 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // PRECONDITION: `out` must be zero-initialized. All call sites pass a
 // fresh `[7]unsigned.Uint128{}` literal, which V zero-initializes.
 @[direct_array_access; inline]
-fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
+fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
+	// clears destination output
+	clear_uint128x7(mut t)
 	// Diagonal terms: x_i · x_i
-	out[0] = add_128(out[0], mult_64(x0, x0))
-	out[2] = add_128(out[2], mult_64(x1, x1))
-	out[4] = add_128(out[4], mult_64(x2, x2))
-	out[6] = add_128(out[6], mult_64(x3, x3))
+	t[0] = add_128(t[0], mult_64(x0, x0))
+	t[2] = add_128(t[2], mult_64(x1, x1))
+	t[4] = add_128(t[4], mult_64(x2, x2))
+	t[6] = add_128(t[6], mult_64(x3, x3))
 
 	// Cross terms: 2 · (x_i · x_j) for i < j, computed as left-shift.
-	out[1] = add_128(out[1], lsh_128(mult_64(x0, x1)))
-	out[2] = add_128(out[2], lsh_128(mult_64(x0, x2)))
-	out[3] = add_128(out[3], lsh_128(mult_64(x0, x3)))
-	out[3] = add_128(out[3], lsh_128(mult_64(x1, x2)))
-	out[4] = add_128(out[4], lsh_128(mult_64(x1, x3)))
-	out[5] = add_128(out[5], lsh_128(mult_64(x2, x3)))
+	t[1] = add_128(t[1], lsh_128(mult_64(x0, x1)))
+	t[2] = add_128(t[2], lsh_128(mult_64(x0, x2)))
+	t[3] = add_128(t[3], lsh_128(mult_64(x0, x3)))
+	t[3] = add_128(t[3], lsh_128(mult_64(x1, x2)))
+	t[4] = add_128(t[4], lsh_128(mult_64(x1, x3)))
+	t[5] = add_128(t[5], lsh_128(mult_64(x2, x3)))
 }
 
 // mul_4limb_schoolbook performs 4×4 limb schoolbook multiplication into
@@ -745,32 +751,44 @@ fn mul_4limb_schoolbook_square(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u
 //
 // The result is a 448-bit value stored in 7 limbs of 128 bits each.
 @[direct_array_access; inline]
-fn mul_4limb_schoolbook(mut out [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	clear_uint128x7(mut out)
-
+fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
+	// clears destination output
+	clear_uint128x7(mut t)
+	// Basic 4x4 schoolbook multiply, x * y
+	//
+	//                            x3 x2 x1 x0
+	//                            y3 y2 y1 y0
+	// -------------------------------------- x
+	//                  x3y0  x2y0  x1y0  x0y0
+	//            x3y1  x2y1  x2y1  x0y1
+	//      x3y2  x2y2  x1y2  x0y2
+	// x3y3 x2y3  x1y3  x0y3
+	// ........................................
+	//  t6   t5    t4    t3    t2    t1    t0
+	// ----------------------------------------
 	// Row 0: x0 · [y0, y1, y2, y3]
-	out[0] = add_128(out[0], mult_64(x0, y0))
-	out[1] = add_128(out[1], mult_64(x0, y1))
-	out[2] = add_128(out[2], mult_64(x0, y2))
-	out[3] = add_128(out[3], mult_64(x0, y3))
+	t[0] = add_128(t[0], mult_64(x0, y0))
+	t[1] = add_128(t[1], mult_64(x0, y1))
+	t[2] = add_128(t[2], mult_64(x0, y2))
+	t[3] = add_128(t[3], mult_64(x0, y3))
 
 	// Row 1: x1 · [y0, y1, y2, y3]
-	out[1] = add_128(out[1], mult_64(x1, y0))
-	out[2] = add_128(out[2], mult_64(x1, y1))
-	out[3] = add_128(out[3], mult_64(x1, y2))
-	out[4] = add_128(out[4], mult_64(x1, y3))
+	t[1] = add_128(t[1], mult_64(x1, y0))
+	t[2] = add_128(t[2], mult_64(x1, y1))
+	t[3] = add_128(t[3], mult_64(x1, y2))
+	t[4] = add_128(t[4], mult_64(x1, y3))
 
 	// Row 2: x2 · [y0, y1, y2, y3]
-	out[2] = add_128(out[2], mult_64(x2, y0))
-	out[3] = add_128(out[3], mult_64(x2, y1))
-	out[4] = add_128(out[4], mult_64(x2, y2))
-	out[5] = add_128(out[5], mult_64(x2, y3))
+	t[2] = add_128(t[2], mult_64(x2, y0))
+	t[3] = add_128(t[3], mult_64(x2, y1))
+	t[4] = add_128(t[4], mult_64(x2, y2))
+	t[5] = add_128(t[5], mult_64(x2, y3))
 
 	// Row 3: x3 · [y0, y1, y2, y3]
-	out[3] = add_128(out[3], mult_64(x3, y0))
-	out[4] = add_128(out[4], mult_64(x3, y1))
-	out[5] = add_128(out[5], mult_64(x3, y2))
-	out[6] = add_128(out[6], mult_64(x3, y3))
+	t[3] = add_128(t[3], mult_64(x3, y0))
+	t[4] = add_128(t[4], mult_64(x3, y1))
+	t[5] = add_128(t[5], mult_64(x3, y2))
+	t[6] = add_128(t[6], mult_64(x3, y3))
 }
 
 // Reduction Helpers
