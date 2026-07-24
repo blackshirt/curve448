@@ -64,3 +64,47 @@ fn test_x448_rfc7748_3() ! {
 		}
 	}
 }
+
+fn test_rfc7448_4() ! {
+	/*
+     Alice's private key, a:
+      9a8f4925d1519f5775cf46b04b5800d4ee9ee8bae8bc5565d498c28d
+      d9c9baf574a9419744897391006382a6f127ab1d9ac2d8c0a598726b
+    Alice's public key, X448(a, 5):
+      9b08f7cc31b7e3e67d22d5aea121074a273bd2b83de09c63faa73d2c
+      22c5d9bbc836647241d953d40c5b12da88120d53177f80e532c41fa0
+    Bob's private key, b:
+      1c306a7ac2a0e2e0990b294470cba339e6453772b075811d8fad0d1d
+      6927c120bb5ee8972b0d3e21374c9c921b09d1b0366f10b65173992d
+    Bob's public key, X448(b, 5):
+      3eb7a829b0cd20f5bcfc0b599b6feccf6da4627107bdb0d4f345b430
+      27d8b972fc3e34fb4232a13ca706dcb57aec3dae07bdc1c67bf33609
+    Their shared secret, K:
+      07fff4181ac6cc95ec1c16a94a0f74d12da232ce40a77552281d282b
+      b60c0b56fd2464c335543936521c24403085d59a449a5037514a879d
+	*/
+	// Alice key
+	a :=
+		hex.decode('9a8f4925d1519f5775cf46b04b5800d4ee9ee8bae8bc5565d498c28dd9c9baf574a9419744897391006382a6f127ab1d9ac2d8c0a598726b')!
+	// Alice public key
+	exp_alice_pbk :=
+		hex.decode('9b08f7cc31b7e3e67d22d5aea121074a273bd2b83de09c63faa73d2c22c5d9bbc836647241d953d40c5b12da88120d53177f80e532c41fa0')!
+	// calculates alice pubkey
+	alice_pbk := x448(a, base_point.bytes())!
+	assert alice_pbk == exp_alice_pbk
+
+	// Bob's private key, b:
+	b :=
+		hex.decode('1c306a7ac2a0e2e0990b294470cba339e6453772b075811d8fad0d1d6927c120bb5ee8972b0d3e21374c9c921b09d1b0366f10b65173992d')!
+	// Bob's public key, X448(b, 5):
+	exp_bob_pbk :=
+		hex.decode('3eb7a829b0cd20f5bcfc0b599b6feccf6da4627107bdb0d4f345b43027d8b972fc3e34fb4232a13ca706dcb57aec3dae07bdc1c67bf33609')!
+	// Calculated Bob's public key
+	bob_pbk := x448(b, base_point.bytes())!
+	assert bob_pbk == exp_bob_pbk
+
+	// Alice calc shared secret
+	alice_shared := x448(a, exp_bob_pbk)!
+	bob_shared := x448(b, exp_alice_pbk)!
+	assert alice_shared == bob_shared
+}

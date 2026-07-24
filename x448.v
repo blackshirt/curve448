@@ -6,6 +6,11 @@
 // key exchange (ECDH) mechanism through curve448 curve, offering 224 bits of security.
 module curve448
 
+const scalar_size = 56
+const base_point = Field{
+	el: [u64(5), 0, 0, 0, 0, 0, 0, 0]!
+}
+
 // X448 diffie-helman key-exchange (ECDH) algorithm.
 //
 // This module implements the X448 primitive, as defined by [RFC 7748].
@@ -22,11 +27,11 @@ module curve448
 // Notes: scalar is cloned internally to avoid side-effects (mutating key in memory)
 @[direct_array_access]
 pub fn x448(scalar []u8, point []u8) ![]u8 {
-	if scalar.len != 56 {
+	if scalar.len != scalar_size {
 		return error('x448: bad scalar length')
 	}
 	// TODO: point validation
-	if point.len != 56 {
+	if point.len != scalar_size {
 		return error('x448: bad point length')
 	}
 
