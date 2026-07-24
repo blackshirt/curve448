@@ -35,12 +35,31 @@ const fe_one = Field{
 	el: [u64(1), 0, 0, 0, 0, 0, 0, 0]!
 }
 
-// fe_p is a prime modulus of the field, ie, p = 2⁴⁴⁸ - 2²²⁴ - 1
-const fe_p = Field{
-	el: [u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFF),
-		u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFE), u64(0x00FF_FFFF_FFFF_FFFF),
-		u64(0x00FF_FFFF_FFFF_FFFF), u64(0x00FF_FFFF_FFFF_FFFF)]!
+// fe_prime is a prime modulus of the field, ie, p = 2⁴⁴⁸ - 2²²⁴ - 1
+const fe_prime = Field{
+	el: [
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFE),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+	]!
 }
+
+// 4 * fe_p limbs pre-computed to prevent bit-overflow during shift
+const fe_4p_limbs = [
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFF8),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+	u64(0x03FF_FFFF_FFFF_FFFC),
+]!
 
 // fe_clear overwrites a field element in-place. It is intended for best-effort
 // source-level wiping of temporary values that may contain secret-dependent data
@@ -87,8 +106,8 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	// We then extract the carry (which acts as a borrow flag) and mask the limb.
 	// UPDATED: use 4*p instead of 2*p
 	for i := 0; i < 8; i++ {
-		// add by 2 * p.el[i]
-		z.el[i] = (a.el[i] + (fe_p.el[i] << 2)) - b.el[i]
+		// add by 4 * p.el[i]
+		z.el[i] = (a.el[i] + fe_4p_limbs[i]) - b.el[i]
 		c[i] = z.el[i] >> fe_limb_size
 		z.el[i] = z.el[i] & fe_masklow_56bits
 	}
@@ -116,14 +135,10 @@ fn fe_sub(mut z Field, a Field, b Field) {
 @[direct_array_access; inline]
 fn fe_negate(mut z Field, a Field) {
 	// Step 1: Subtract each limb of a from 4 * p.
-	z.el[0] = u64(0x03fffffffffffffc) - a.el[0]
-	z.el[1] = u64(0x03fffffffffffffc) - a.el[1]
-	z.el[2] = u64(0x03fffffffffffffc) - a.el[2]
-	z.el[3] = u64(0x03fffffffffffffc) - a.el[3]
-	z.el[4] = u64(0x03fffffffffffff8) - a.el[4]
-	z.el[5] = u64(0x03fffffffffffffc) - a.el[5]
-	z.el[6] = u64(0x03fffffffffffffc) - a.el[6]
-	z.el[7] = u64(0x03fffffffffffffc) - a.el[7]
+	for i := 0; i < 8; i++ {
+		z.el[i] = fe_4p_limbs[i] - a.el[i]
+	}
+
 	// Step 2: Extract and propagate the carries.
 	mut c := [8]u64{}
 	for i := 0; i < 8; i++ {
@@ -688,8 +703,8 @@ fn (v Field) is_negative() int {
 @[inline]
 fn mask_64bits(cond int) u64 {
 	c := u64(cond)
-	nz := c | (u64(0) - c)
-	return u64(0) - (nz >> 63)
+	normalized := (c | (0 - c)) >> 63
+	return u64(0) - normalized
 }
 
 // add_128 adds a + b

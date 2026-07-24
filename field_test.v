@@ -411,7 +411,7 @@ fn test_sqrtratio() {
 
 fn test_unreduced_comparison() {
 	a := fe_zero
-	b := fe_p
+	b := fe_prime
 	assert fe_equal(a, b) == true
 }
 
