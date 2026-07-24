@@ -788,9 +788,8 @@ fn reduce_8limb_product(mut z Field, t0 unsigned.Uint128, t1 unsigned.Uint128, t
 	mut c := u64(0)
 
 	// Extract 56-bit limbs from each 128-bit accumulator, propagating carries.
-	lo0, hi0 := add_u64_to_128(t0, c)
-	z.el[0] = lo0 & mask_56bits
-	c = (hi0 << 8) | (lo0 >> 56)
+	z.el[0] = t0.lo & mask_56bits
+	c = (t0.hi << 8) | (t0.lo >> 56)
 
 	lo1, hi1 := add_u64_to_128(t1, c)
 	z.el[1] = lo1 & mask_56bits
