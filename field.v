@@ -692,12 +692,6 @@ fn mask_64bits(cond int) u64 {
 	return u64(0) - (nz >> 63)
 }
 
-// shift_right_by56 returns a >> 56. a is assumed to be below 128 bits.
-@[inline]
-fn shift_right_by56(mut a unsigned.Uint128) u64 {
-	return (a.hi << 8) | (a.lo >> 56)
-}
-
 // add_128 adds a + b
 @[inline]
 fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
@@ -708,12 +702,6 @@ fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 @[inline]
 fn lsh_128(a unsigned.Uint128) unsigned.Uint128 {
 	return unsigned.uint128_new(a.lo << 1, (a.hi << 1) | (a.lo >> 63))
-}
-
-// lsh_256 does a << 2
-@[inline]
-fn lsh_256(a unsigned.Uint128) unsigned.Uint128 {
-	return unsigned.uint128_new(a.lo << 2, (a.hi << 2) | (a.lo >> 62))
 }
 
 // mult_64 creates Uint128 from two's 64-bit product of a*b
