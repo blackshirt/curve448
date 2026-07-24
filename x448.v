@@ -42,11 +42,17 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	// 2⁴⁴⁸; the two least significant bits of the first byte, and the
 	// most significant bit of the last byte, are ignored.
 	mut s := scalar.clone()
+	defer {
+		secure_zeroise(mut s)
+	}
 	s[0] &= 252
 	s[55] |= 128
 
 	mut u := Field{}
 	u.set_bytes(point)!
+	defer {
+		fe_clear(mut u)
+	}
 
 	// setup vars
 	mut x1 := u
@@ -141,10 +147,6 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	fe_mult(mut ret, x2, ret)
 
 	ret_is_zero := fe_cmp(ret, fe_zero)
-	out := ret.bytes()
-	// Cleaning up temporary variables, its contains sensitive data
-	// TODO: clear another scalar
-
 	// Keep the low-order/all-zero API branch after wiping scalar and field
 	// temporaries. The ladder itself remains branch-free with respect to scalar
 	// bits; this branch only decides whether to return the already-computed output.
@@ -152,6 +154,6 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 		return error('x448 bad input point: low order point')
 	}
 
-	// TODO: cleaning up temporary variables
+	out := ret.bytes()
 	return out
 }
