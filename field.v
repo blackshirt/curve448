@@ -832,8 +832,8 @@ fn reduce_8limb_product(mut z Field, t0 unsigned.Uint128, t1 unsigned.Uint128, t
 // Returns (lo, hi) where the result is hi·2⁶⁴ + lo.
 @[inline]
 fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
-	lo := t.lo + c
-	hi := t.hi + if lo < c { u64(1) } else { u64(0) }
+	lo, carry := bits.add_64(t.lo, c, 0)
+	hi, _ := bits.add_64(t.hi, 0, carry)
 	return lo, hi
 }
 
