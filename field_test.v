@@ -825,7 +825,9 @@ const high_carry_reduction_vectors = [
 fn test_canonical_encoding_boundaries() ! {
 	for item in canonical_encoding_vectors {
 		mut x := Field{}
-		x.set_bytes(item.encoded) or { assert err == error('non-canonical field element (x >= p)') }
+		x.set_bytes(item.encoded) or {
+			assert err == error('set_bytes: non-canonical field element (x >= p)')
+		}
 		fe_reduce(mut x)
 		assert x == item.reduced
 
