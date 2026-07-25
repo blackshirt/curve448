@@ -415,6 +415,16 @@ fn test_unreduced_comparison() {
 	assert fe_equal(a, b) == true
 }
 
+fn test_fe_is_zero_reduces_in_place() {
+	mut x := fe_prime
+	assert fe_is_zero(mut x) == 1
+	assert fe_equal(x, fe_zero) == true
+
+	mut y := fe_one
+	assert fe_is_zero(mut y) == 0
+	assert fe_equal(y, fe_one) == true
+}
+
 // Big-reference vectors were generated with Python integer arithmetic modulo
 // p = 2^448 - 2^224 - 1. They intentionally include canonical values,
 // p-adjacent values, all-56-bit limbs, all-57-bit redundant limbs, and

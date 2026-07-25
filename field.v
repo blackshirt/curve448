@@ -76,6 +76,22 @@ const fe_4p_limbs = [
 	u64(0x03FF_FFFF_FFFF_FFFC),
 ]!
 
+// fe_minus_one is the canonical representative of -1 mod p (p - 1).
+// It is a known low-order Montgomery u-coordinate and must be rejected by
+// strict point validation.
+const fe_minus_one = Field{
+	el: [
+		u64(0x00FF_FFFF_FFFF_FFFE),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFE),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+		u64(0x00FF_FFFF_FFFF_FFFF),
+	]!
+}
+
 // Field represents an element of GF(p) where p = 2⁴⁴⁸ - 2²²⁴ - 1.
 //
 // The 448-bit integer is stored in unsaturated (redundant) 56-bit limbs
@@ -109,9 +125,7 @@ mut:
 // wipe primitive (e.g., explicit_bzero, memset_s, or volatile writes).
 @[direct_array_access; inline]
 fn fe_clear(mut z Field) {
-	for i := 0; i < 8; i++ {
-		z.el[i] = 0
-	}
+	crypto_wipe_8xu64(mut z.el)
 }
 
 // fe_clone copies all limbs from x into z.
@@ -398,6 +412,8 @@ fn fe_inverse(mut z Field, x Field) {
 	fe_sqr(mut t, t) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 
 	fe_mult(mut z, t, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
+	// clear out t
+	fe_clear(mut t)
 }
 
 // fe_power446 computes v = z^((p-3)/4) (mod p), where:
@@ -496,6 +512,20 @@ fn fe_power446(mut v Field, z Field) {
 		fe_sqr(mut x, x)
 	}
 	fe_mult(mut v, x, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
+
+	// wipe temporary sensitive materials
+	//
+	fe_clear(mut t1)
+	fe_clear(mut t2)
+	fe_clear(mut t3)
+	fe_clear(mut t6)
+	fe_clear(mut t9)
+	fe_clear(mut t18)
+	fe_clear(mut t37)
+	fe_clear(mut t111)
+	fe_clear(mut t222)
+	fe_clear(mut t223)
+	fe_clear(mut x)
 }
 
 // fe_sqrtratio computes the square root of the ratio u/v (mod p).
@@ -519,6 +549,10 @@ fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 	fe_mult(mut ck, v, ck)
 
 	is_square := fe_cmp(ck, u)
+
+	// explicitly wipe sensitive data before return.
+	fe_clear(mut uv)
+	fe_clear(mut ck)
 
 	return r, is_square
 }
@@ -545,7 +579,32 @@ fn (v Field) is_negative() int {
 	mut x := Field{}
 	fe_clone(mut x, v)
 	fe_reduce(mut x)
-	return int(x.el[0] & 1)
+
+	is_negative := int(x.el[0] & 1)
+	fe_clear(mut x)
+
+	return is_negative
+}
+
+// fe_is_zero returns 1 if x == 0 (mod p), otherwise 0.
+//
+// The input is reduced in place before inspection so callers that already plan
+// to clear the field element do not create an extra stack copy of secret data.
+@[direct_array_access; inline]
+fn fe_is_zero(mut x Field) int {
+	fe_reduce(mut x)
+
+	mut c := u64(0)
+	c |= x.el[0]
+	c |= x.el[1]
+	c |= x.el[2]
+	c |= x.el[3]
+	c |= x.el[4]
+	c |= x.el[5]
+	c |= x.el[6]
+	c |= x.el[7]
+
+	return int(1 - ((c | (0 - c)) >> 63))
 }
 
 // Multiplication
@@ -558,88 +617,6 @@ fn (v Field) is_negative() int {
 fn fe_mult(mut z Field, x Field, y Field) {
 	fe_mult_karatsuba(mut z, x, y)
 }
-
-/*
-// fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
-//
-// Split each 448-bit input into low and high 224-bit halves (4 limbs each):
-//     x = x0 + x1·B⁴,   y = y0 + y1·B⁴,   where B = 2⁵⁶
-//
-// Karatsuba computes the product with three 4-limb multiplications
-// instead of four:
-//     z0 = x0 · y0
-//     z2 = x1 · y1
-//     z1 = (x0+x1)·(y0+y1) - z0 - z2
-//     x·y = z0 + z1·B⁴ + z2·B⁸
-//
-// The 15 resulting polynomial limbs are then folded modulo p using the
-// Solinas identity B⁸ = B⁴ + 1 (i.e., 2⁴⁴⁸ = 2²²⁴ + 1).
-//
-// All intermediate arithmetic stays below 128 bits.
-@[direct_array_access; inline]
-fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
-	mut z0 := [7]unsigned.Uint128{}
-	mut z1 := [7]unsigned.Uint128{}
-	mut z2 := [7]unsigned.Uint128{}
-
-	// 1. Compute lower product: z0 = x0 · y0
-	mul_4limb_schoolbook(mut z0, x.el[0], x.el[1], x.el[2], x.el[3], y.el[0], y.el[1], y.el[2],
-		y.el[3])
-
-	// 2. Compute upper product: z2 = x1 · y1
-	mul_4limb_schoolbook(mut z2, x.el[4], x.el[5], x.el[6], x.el[7], y.el[4], y.el[5], y.el[6],
-		y.el[7])
-
-	// 3. Compute middle product: z1 = (x0+x1)·(y0+y1) - z0 - z2
-	//    First, compute the sums x0+x1 and y0+y1.
-	x01_0 := x.el[0] + x.el[4]
-	x01_1 := x.el[1] + x.el[5]
-	x01_2 := x.el[2] + x.el[6]
-	x01_3 := x.el[3] + x.el[7]
-
-	y01_0 := y.el[0] + y.el[4]
-	y01_1 := y.el[1] + y.el[5]
-	y01_2 := y.el[2] + y.el[6]
-	y01_3 := y.el[3] + y.el[7]
-
-	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
-
-	// Apply a bias of 2¹²⁰ to each z1 limb before subtraction to ensure
-	// non-negative intermediate values (since Uint128 has no signed mode).
-	bias := unsigned.uint128_new(0, u64(1) << 56)
-
-	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], bias)
-		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
-	}
-
-	// 4. Assemble the full 15-limb product polynomial r[0..14].
-	mut r := [15]unsigned.Uint128{}
-	for i := 0; i < 7; i++ {
-		r[i] = add_128(r[i], z0[i])
-		r[i + 4] = add_128(r[i + 4], z1[i])
-		r[i + 8] = add_128(r[i + 8], z2[i])
-	}
-
-	// Subtract the bias back out from limbs 4..10 (where it was added).
-	for i := 0; i < 7; i++ {
-		r[i + 4] = sub_128(r[i + 4], bias)
-	}
-
-	// 5. Reduce modulo p = 2⁴⁴⁸ - 2²²⁴ - 1.
-	fold_and_reduce_15limb(mut z, r)
-
-	// NOTE: Stack clearing of z0/z1/z2/r is commented out below.
-	// For strict side-channel resistance, these should be wiped if the
-	// inputs are secret. V zero-initializes fresh arrays, but does not
-	// guarantee clearing of intermediate stack values.
-	//
-	// clear_uint128x7(mut z0)
-	// clear_uint128x7(mut z1)
-	// clear_uint128x7(mut z2)
-	// clear_uint128x15(mut r)
-}
-*/
 
 // Squaring
 //
@@ -709,14 +686,13 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	//    without materializing an intermediate r[0..14] array.
 	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
 
-	// NOTE: Stack clearing of z0/z1/z2 is commented out below.
 	// For strict side-channel resistance, these should be wiped if the
 	// inputs are secret. V zero-initializes fresh arrays, but does not
 	// guarantee clearing of intermediate stack values.
 	//
-	// clear_uint128x7(mut z0)
-	// clear_uint128x7(mut z1)
-	// clear_uint128x7(mut z2)
+	crypto_wipe_7xuint128(mut z0)
+	crypto_wipe_7xuint128(mut z1)
+	crypto_wipe_7xuint128(mut z2)
 }
 
 // fe_sqr_karatsuba squares a field element using optimized Karatsuba.
@@ -761,6 +737,11 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 	// 4. Solinas reduction, folding z0/z1/z2 directly without
 	//    materializing an intermediate r[0..14] array.
 	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
+
+	// clear out temporary vars
+	crypto_wipe_7xuint128(mut z0)
+	crypto_wipe_7xuint128(mut z1)
+	crypto_wipe_7xuint128(mut z2)
 }
 
 // Solinas Reduction: direct fold (no intermediate r[0..14] array)
@@ -795,7 +776,7 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // Net savings vs the old r[]-based version: skips the ~21 add_128 calls
 // that used to build r[], the 7 sub_128 calls that used to undo bias on
 // r[4..10] (now a single per-element bias removal below), and the
-// clear_uint128x15 pass -- roughly 21 fewer Uint128 operations per call,
+// crypto_wipe_15xuint128 pass -- roughly 21 fewer Uint128 operations per call,
 // in the two hottest functions in this file (fe_sqr_karatsuba alone runs
 // ~400 times per fe_power446 call).
 @[direct_array_access; inline]
@@ -826,68 +807,6 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 	reduce_8limb_product(mut z, t0, t1, t2, t3, t4, t5, t6, t7)
 }
 
-/*
-// fe_sqr_karatsuba squares a field element using optimized Karatsuba.
-//
-// Structurally identical to fe_mult_karatsuba, but since both operands
-// are the same (x = x0 + x1·B⁴), all three sub-products are squarings:
-//     z0 = x0²,   z2 = x1²,   z1 = (x0+x1)² - z0 - z2
-//
-// Each sub-product uses mul_4limb_schoolbook_square (10 multiplications)
-// instead of mul_4limb_schoolbook (16 multiplications): 30 total vs 48,
-// a ~37% reduction. This is the highest-leverage optimization in the
-// entire field layer because fe_power446 (the core of inverse and sqrt)
-// consists almost entirely of repeated squarings (>400 per call).
-@[direct_array_access; inline]
-fn fe_sqr_karatsuba(mut z Field, x Field) {
-	mut z0 := [7]unsigned.Uint128{}
-	mut z1 := [7]unsigned.Uint128{}
-	mut z2 := [7]unsigned.Uint128{}
-
-	// 1. Lower square: z0 = x0²
-	mul_4limb_schoolbook_square(mut z0, x.el[0], x.el[1], x.el[2], x.el[3])
-
-	// 2. Upper square: z2 = x1²
-	mul_4limb_schoolbook_square(mut z2, x.el[4], x.el[5], x.el[6], x.el[7])
-
-	// 3. Middle square: z1 = (x0+x1)² - z0 - z2
-	x01_0 := x.el[0] + x.el[4]
-	x01_1 := x.el[1] + x.el[5]
-	x01_2 := x.el[2] + x.el[6]
-	x01_3 := x.el[3] + x.el[7]
-
-	mul_4limb_schoolbook_square(mut z1, x01_0, x01_1, x01_2, x01_3)
-
-	// Bias to ensure non-negative subtraction.
-	// Adding bias 2^120 to each 128-bit limb accumulator guarantees that the result
-	// stays non-negative before doing unsigned 128-bit subtraction, while placing
-	// the bias high enough (at bit 120) so it doesn't interfere with
-	// or overflow the lower 56-bit limb data.
-	bias := unsigned.uint128_new(0, u64(1) << 56)
-
-	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], bias)
-		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
-	}
-
-	// 4. Assemble 15-limb polynomial.
-	mut r := [15]unsigned.Uint128{}
-	for i := 0; i < 7; i++ {
-		r[i] = add_128(r[i], z0[i])
-		r[i + 4] = add_128(r[i + 4], z1[i])
-		r[i + 8] = add_128(r[i + 8], z2[i])
-	}
-
-	// Remove bias from limbs 4..10.
-	for i := 0; i < 7; i++ {
-		r[i + 4] = sub_128(r[i + 4], bias)
-	}
-
-	// 5. Solinas reduction.
-	fold_and_reduce_15limb(mut z, r)
-}
-*/
-
 // Low-Level Limb Multiplication Primitives
 //
 // mul_4limb_schoolbook_square performs 4-limb schoolbook squaring into a
@@ -904,7 +823,7 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
 	// clears destination output
-	clear_uint128x7(mut t)
+	crypto_wipe_7xuint128(mut t)
 	// Diagonal terms: x_i · x_i
 	t[0] = add_128(t[0], mult_64(x0, x0))
 	t[2] = add_128(t[2], mult_64(x1, x1))
@@ -931,7 +850,7 @@ fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
 	// clears destination output
-	clear_uint128x7(mut t)
+	crypto_wipe_7xuint128(mut t)
 	// Basic 4x4 schoolbook multiply, x * y
 	//
 	//                            x3 x2 x1 x0
@@ -1076,7 +995,7 @@ fn fe_mult_32(mut z Field, x Field, y u32) {
 //
 // This is the STRICT variant: non-canonical inputs are rejected.
 // For RFC 7748 compliant behavior (reduce non-canonical inputs mod p),
-// use set_bytes_little_endian instead.
+// use set_bytes_loosely instead.
 @[direct_array_access; inline]
 fn (mut z Field) set_bytes(b []u8) ! {
 	if b.len != 56 {
@@ -1098,15 +1017,15 @@ fn (mut z Field) set_bytes(b []u8) ! {
 	}
 }
 
-// set_bytes_little_endian parses a 56-byte little-endian array and reduces
+// set_bytes_loosely parses a 56-byte little-endian array and reduces
 // the result modulo p.
 //
 // Per RFC 7748, X448 implementations must accept non-canonical input bytes
 // (x >= p) and reduce them modulo p. This function implements that behavior.
 @[direct_array_access; inline]
-fn (mut z Field) set_bytes_little_endian(b []u8) ! {
+fn (mut z Field) set_bytes_loosely(b []u8) ! {
 	if b.len != 56 {
-		return error('set_bytes_little_endian: expected 56 bytes, got ${b.len}')
+		return error('set_bytes_loosely: expected 56 bytes, got ${b.len}')
 	}
 
 	// Parse little-endian limbs.
@@ -1163,21 +1082,6 @@ fn (z Field) is_canonical() bool {
 @[direct_array_access; inline]
 fn (mut x Field) bytes() []u8 {
 	mut dst := []u8{len: 56}
-	x.to_bytes(mut dst) or { panic('bytes: internal serialization error') }
-	return dst
-}
-
-// to_bytes serializes a field element into a pre-allocated 56-byte buffer
-// in little-endian form.
-//
-// The element is fully reduced before serialization. Returns an error if
-// dst.len != 56.
-@[direct_array_access; inline]
-fn (mut x Field) to_bytes(mut dst []u8) ! {
-	if dst.len != 56 {
-		return error('to_bytes: destination must be exactly 56 bytes')
-	}
-
 	// Ensure canonical representation before serialization.
 	fe_reduce(mut x)
 
@@ -1192,6 +1096,7 @@ fn (mut x Field) to_bytes(mut dst []u8) ! {
 		dst[i + 42] = u8(x.el[6] >> u64(i * 8))
 		dst[i + 49] = u8(x.el[7] >> u64(i * 8))
 	}
+	return dst
 }
 
 // Field Reduction
@@ -1273,94 +1178,6 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[0] &= mask_56bits
 	x.el[5] += x.el[4] >> limbsize
 	x.el[4] &= mask_56bits
-}
-
-// Utility / Helper Functions
-//
-// mask_64bits returns an all-ones mask if cond is nonzero, all-zeros if
-// cond == 0.
-//
-// Robust to any nonzero encoding of "true" (1, -1, 2, ...). Uses the
-// branchless trick: (x | -x) has its MSB set iff x != 0.
-//
-// This is the fundamental building block for constant-time selection.
-@[inline]
-fn mask_64bits(cond int) u64 {
-	c := u64(cond)
-	normalized := (c | (0 - c)) >> 63
-	return u64(0) - normalized
-}
-
-// add_128 adds two 128-bit unsigned integers.
-@[inline]
-fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	return a.add(b)
-}
-
-// lsh_128 left-shifts a 128-bit value by 1 bit.
-//
-// Computes: result = a << 1
-@[inline]
-fn lsh_128(a unsigned.Uint128) unsigned.Uint128 {
-	return unsigned.uint128_new(a.lo << 1, (a.hi << 1) | (a.lo >> 63))
-}
-
-// mult_64 computes the full 128-bit product of two 64-bit values.
-//
-// Returns a Uint128 where: value = a · b
-@[inline]
-fn mult_64(a u64, b u64) unsigned.Uint128 {
-	hi, lo := bits.mul_64(a, b)
-	return unsigned.uint128_new(lo, hi)
-}
-
-// mult_56 multiplies a 56-bit limb by a 32-bit scalar.
-//
-// Returns (lo, hi) such that: lo + hi · 2⁵⁶ = a · b
-// The low 56 bits are masked; the high bits are shifted appropriately.
-@[inline]
-fn mult_56(a u64, b u32) (u64, u64) {
-	hh, ll := bits.mul_64(a, u64(b))
-	lo := ll & mask_56bits
-	hi := (hh << 8) | (ll >> limbsize)
-	return lo, hi
-}
-
-// sub_128 subtracts b from a.
-//
-// PRECONDITION: a >= b. The caller must ensure this; behavior is undefined
-// otherwise (wrap-around in unsigned arithmetic).
-@[inline]
-fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	lo, borrow := bits.sub_64(a.lo, b.lo, 0)
-	hi, _ := bits.sub_64(a.hi, b.hi, borrow)
-	return unsigned.uint128_new(lo, hi)
-}
-
-// clear_u64x4 zeroes a 4-element u64 array.
-@[direct_array_access; inline]
-fn clear_u64x4(mut values [4]u64) {
-	for i := 0; i < 4; i++ {
-		values[i] = 0
-	}
-}
-
-// clear_uint128x7 zeroes a 7-element Uint128 array.
-@[direct_array_access; inline]
-fn clear_uint128x7(mut values [7]unsigned.Uint128) {
-	zero := unsigned.uint128_new(0, 0)
-	for i := 0; i < 7; i++ {
-		values[i] = zero
-	}
-}
-
-// clear_uint128x15 zeroes a 15-element Uint128 array.
-@[direct_array_access; inline]
-fn clear_uint128x15(mut values [15]unsigned.Uint128) {
-	zero := unsigned.uint128_new(0, 0)
-	for i := 0; i < 15; i++ {
-		values[i] = zero
-	}
 }
 
 // Solinas Reduction: 15-limb folding

@@ -38,13 +38,14 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	// most significant bit of the last byte, are ignored.
 	mut s := scalar.clone()
 	defer {
-		secure_zeroise(mut s)
+		// zeroise the cloned scalar after use
+		secure_zero_buf(mut s)
 	}
 	s[0] &= 252
 	s[55] |= 128
 
 	mut u := Field{}
-	u.set_bytes_little_endian(point)!
+	u.set_bytes_loosely(point)!
 	defer {
 		fe_clear(mut u)
 	}
@@ -166,7 +167,7 @@ pub fn validate_point(point []u8) ! {
 	}
 	mut u := Field{}
 	u.set_bytes(point) or { return error('x448: non-canonical point') }
-	if fe_cmp(u, fe_zero) == 1 || fe_cmp(u, fe_one) == 1 || fe_cmp(u, fe_prime) == 1 {
+	if fe_cmp(u, fe_zero) == 1 || fe_cmp(u, fe_one) == 1 || fe_cmp(u, fe_minus_one) == 1 {
 		return error('x448: low order point')
 	}
 }

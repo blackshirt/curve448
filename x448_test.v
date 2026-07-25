@@ -124,6 +124,11 @@ fn test_validate_point() ! {
 	one_point[0] = 1
 	validate_point(one_point) or { assert err == error('x448: low order point') }
 
+	mut minus_one_point := []u8{len: 56, init: 0xff}
+	minus_one_point[0] = 0xfe
+	minus_one_point[28] = 0xfe
+	validate_point(minus_one_point) or { assert err == error('x448: low order point') }
+
 	// 4. Non-canonical point (all 0xFF = 2^448 - 1 >= p)
 	non_canonical_point := []u8{len: 56, init: 0xff}
 	validate_point(non_canonical_point) or { assert err == error('x448: non-canonical point') }
