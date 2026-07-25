@@ -75,20 +75,20 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 @[direct_array_access; inline]
 fn clear_7xuint128(mut data [7]unsigned.Uint128) {
 	unsafe {
-		vmemset(voidptr(&data[0]), 0, 7 * sizeof(unsigned.Uint128))
+		vmemset(voidptr(&data[0]), 0, 7 * 2 * 8)
 	}
 }
 
 // crypto_wipe_4xu64 zeroes a 4-element u64 array.
 @[direct_array_access; inline]
 fn crypto_wipe_4xu64(mut values [4]u64) {
-	secure_zero_ptr(voidptr(&values[0]), isize(4 * sizeof(u64)))
+	secure_zero_ptr(voidptr(&values[0]), 4 * 8)
 }
 
 // crypto_wipe_8xu64 zeroes a 8-element u64 array.
 @[direct_array_access; inline]
 fn crypto_wipe_8xu64(mut values [8]u64) {
-	secure_zero_ptr(voidptr(&values[0]), isize(8 * sizeof(u64)))
+	secure_zero_ptr(voidptr(&values[0]), 8 * 8)
 }
 
 // crypto_wipe_7xuint128 securely zeroises a 7-element Uint128 array.
@@ -98,58 +98,40 @@ fn crypto_wipe_8xu64(mut values [8]u64) {
 // read barrier as byte-slice scalar clearing.
 @[direct_array_access; inline]
 fn crypto_wipe_7xuint128(mut values [7]unsigned.Uint128) {
-	secure_zero_ptr(voidptr(&values[0]), isize(7 * sizeof(unsigned.Uint128)))
+	secure_zero_ptr(voidptr(&values[0]), 7 * 16)
 }
 
 // crypto_wipe_15xuint128 zeroes a 15-element Uint128 array.
 @[direct_array_access; inline]
 fn crypto_wipe_15xuint128(mut values [15]unsigned.Uint128) {
-	secure_zero_ptr(voidptr(&values[0]), isize(15 * sizeof(unsigned.Uint128)))
+	secure_zero_ptr(voidptr(&values[0]), 15 * 16)
 }
 
 // secure_zero_ptr zeroises ptr data with length len.
 //
-// Its internally used vmemset for writing (zeroing) data,
-// and use volatile read dependency to tell the compiler to commit
-// all prior memory stores before executing the read.
-// NOTE: This code was working, but not guarantees. Its depends on
-// the backend generated output.
+// NOTE: This code was working, but not guarantees.
+// Its depends on the backend generated output.
 // TODO: correct way to do this in v.
 @[inline]
-fn secure_zero_ptr(ptr voidptr, len isize) {
+fn secure_zero_ptr(ptr voidptr, len int) {
 	if isnil(ptr) || len == 0 {
 		return
 	}
 	unsafe {
-		// 1. Fast zeroing via built-in vmemset
-		vmemset(ptr, 0, len)
+		// Cast the void pointer to a volatile byte pointer.
+		// The `volatile` qualifier informs the backend compiler that writes
+		// to this memory location produce observable side-effects and must NOT
+		// be elided or optimized away (preventing Dead Store Elimination).
+		mut volatile vp := &u8(ptr)
 
-		// 2. Pure V Volatile Read Dependency
-		//
-		// Reading a byte via a volatile pointer forces the compiler to commit
-		// all prior memory stores before executing the read.
-		mut volatile vptr := &u8(ptr)
-		_ = vptr[0]
+		for i in 0 .. len {
+			vp[i] = 0
+		}
 	}
 }
 
 // secure_zero_buf zeroises buf data securely.
-@[inline]
+@[direct_array_access; inline]
 fn secure_zero_buf(mut buf []u8) {
-	if buf.len == 0 {
-		return
-	}
-
-	unsafe {
-		// 1. Fast zeroing
-		vmemset(buf.data, 0, buf.len)
-
-		// 2. Pure V Compiler Barrier
-		//
-		// Force a volatile read on the first byte.
-		// The compiler cannot elide the `vmemset` store above because
-		// it must satisfy this subsequent volatile read access.
-		mut volatile vp := &u8(buf.data)
-		_ = vp[0]
-	}
+	secure_zero_ptr(buf.data, buf.len)
 }
