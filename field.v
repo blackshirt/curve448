@@ -21,9 +21,9 @@ import math.unsigned
 
 // Module Constants
 
-// limbsize is the width of each field limb in bits.
+// limb_bits_size is the width of each field limb in bits.
 // Eight limbs × 56 bits = 448 bits total.
-const limbsize = 56
+const limb_bits_size = 56
 
 // mask_56bits masks the lower 56 bits of a u64 value.
 // Used to clamp each limb to its valid bit-width.
@@ -175,35 +175,35 @@ fn fe_add(mut z Field, a Field, b Field) {
 fn fe_sub(mut z Field, a Field, b Field) {
 	// Step 1: Compute (a + 4p) - b per limb, extracting carries.
 	z0 := (a.el[0] + fe_4p_limbs[0]) - b.el[0]
-	c0 := z0 >> limbsize
+	c0 := z0 >> limb_bits_size
 	z.el[0] = z0 & mask_56bits
 
 	z1 := (a.el[1] + fe_4p_limbs[1]) - b.el[1]
-	c1 := z1 >> limbsize
+	c1 := z1 >> limb_bits_size
 	z.el[1] = z1 & mask_56bits
 
 	z2 := (a.el[2] + fe_4p_limbs[2]) - b.el[2]
-	c2 := z2 >> limbsize
+	c2 := z2 >> limb_bits_size
 	z.el[2] = z2 & mask_56bits
 
 	z3 := (a.el[3] + fe_4p_limbs[3]) - b.el[3]
-	c3 := z3 >> limbsize
+	c3 := z3 >> limb_bits_size
 	z.el[3] = z3 & mask_56bits
 
 	z4 := (a.el[4] + fe_4p_limbs[4]) - b.el[4]
-	c4 := z4 >> limbsize
+	c4 := z4 >> limb_bits_size
 	z.el[4] = z4 & mask_56bits
 
 	z5 := (a.el[5] + fe_4p_limbs[5]) - b.el[5]
-	c5 := z5 >> limbsize
+	c5 := z5 >> limb_bits_size
 	z.el[5] = z5 & mask_56bits
 
 	z6 := (a.el[6] + fe_4p_limbs[6]) - b.el[6]
-	c6 := z6 >> limbsize
+	c6 := z6 >> limb_bits_size
 	z.el[6] = z6 & mask_56bits
 
 	z7 := (a.el[7] + fe_4p_limbs[7]) - b.el[7]
-	c7 := z7 >> limbsize
+	c7 := z7 >> limb_bits_size
 	z.el[7] = z7 & mask_56bits
 
 	// Step 2: Propagate carries. The carry out of limb 7 is folded
@@ -234,35 +234,35 @@ fn fe_sub(mut z Field, a Field, b Field) {
 fn fe_negate(mut z Field, a Field) {
 	// Step 1: Compute 4p - a per limb.
 	z0 := fe_4p_limbs[0] - a.el[0]
-	c0 := z0 >> limbsize
+	c0 := z0 >> limb_bits_size
 	z.el[0] = z0 & mask_56bits
 
 	z1 := fe_4p_limbs[1] - a.el[1]
-	c1 := z1 >> limbsize
+	c1 := z1 >> limb_bits_size
 	z.el[1] = z1 & mask_56bits
 
 	z2 := fe_4p_limbs[2] - a.el[2]
-	c2 := z2 >> limbsize
+	c2 := z2 >> limb_bits_size
 	z.el[2] = z2 & mask_56bits
 
 	z3 := fe_4p_limbs[3] - a.el[3]
-	c3 := z3 >> limbsize
+	c3 := z3 >> limb_bits_size
 	z.el[3] = z3 & mask_56bits
 
 	z4 := fe_4p_limbs[4] - a.el[4]
-	c4 := z4 >> limbsize
+	c4 := z4 >> limb_bits_size
 	z.el[4] = z4 & mask_56bits
 
 	z5 := fe_4p_limbs[5] - a.el[5]
-	c5 := z5 >> limbsize
+	c5 := z5 >> limb_bits_size
 	z.el[5] = z5 & mask_56bits
 
 	z6 := fe_4p_limbs[6] - a.el[6]
-	c6 := z6 >> limbsize
+	c6 := z6 >> limb_bits_size
 	z.el[6] = z6 & mask_56bits
 
 	z7 := fe_4p_limbs[7] - a.el[7]
-	c7 := z7 >> limbsize
+	c7 := z7 >> limb_bits_size
 	z.el[7] = z7 & mask_56bits
 
 	// Step 2: Propagate carries with Solinas fold-back.
@@ -823,7 +823,7 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
 	// clears destination output
-	crypto_wipe_7xuint128(mut t)
+	clear_7xuint128(mut t)
 	// Diagonal terms: x_i · x_i
 	t[0] = add_128(t[0], mult_64(x0, x0))
 	t[2] = add_128(t[2], mult_64(x1, x1))
@@ -850,7 +850,7 @@ fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
 	// clears destination output
-	crypto_wipe_7xuint128(mut t)
+	clear_7xuint128(mut t)
 	// Basic 4x4 schoolbook multiply, x * y
 	//
 	//                            x3 x2 x1 x0
@@ -1123,7 +1123,7 @@ fn fe_reduce(mut x Field) {
 		// Branchless: add = 1 when i == 4 (the 2²²⁴ term), else 0.
 		add := u64(1) - ((u64(i ^ 4) | (0 - u64(i ^ 4))) >> 63)
 		s := x.el[i] + add + c
-		c = s >> limbsize
+		c = s >> limb_bits_size
 	}
 
 	// Step 3: Subtract p by adding c·(2²²⁴ + 1) to x.
@@ -1136,7 +1136,7 @@ fn fe_reduce(mut x Field) {
 	for i := 0; i < 8; i++ {
 		s := x.el[i] + c
 		x.el[i] = s & mask_56bits
-		c = s >> limbsize
+		c = s >> limb_bits_size
 	}
 
 	// Final safety pass: absorb any remaining carry from the subtraction.
@@ -1162,7 +1162,7 @@ fn fe_weak_reduce(mut x Field) {
 		for i := 0; i < 8; i++ {
 			s := x.el[i] + c
 			x.el[i] = s & mask_56bits
-			c = s >> limbsize
+			c = s >> limb_bits_size
 		}
 		// Fold overflow carry back into limbs 0 and 4.
 		x.el[0] += c
@@ -1174,9 +1174,9 @@ fn fe_weak_reduce(mut x Field) {
 
 	// Final ripple: handle any single-bit overflow in el[0] or el[4]
 	// that remains after the two passes.
-	x.el[1] += x.el[0] >> limbsize
+	x.el[1] += x.el[0] >> limb_bits_size
 	x.el[0] &= mask_56bits
-	x.el[5] += x.el[4] >> limbsize
+	x.el[5] += x.el[4] >> limb_bits_size
 	x.el[4] &= mask_56bits
 }
 

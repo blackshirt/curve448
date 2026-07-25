@@ -53,7 +53,7 @@ fn mult_64(a u64, b u64) unsigned.Uint128 {
 fn mult_56(a u64, b u32) (u64, u64) {
 	hh, ll := bits.mul_64(a, u64(b))
 	lo := ll & mask_56bits
-	hi := (hh << 8) | (ll >> limbsize)
+	hi := (hh << 8) | (ll >> limb_bits_size)
 	return lo, hi
 }
 
@@ -70,6 +70,15 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 
 // Helpers for wiping sensitive data securely
 //
+
+// clear_7xuint128 reset out the data into 0.
+@[direct_array_access; inline]
+fn clear_7xuint128(mut data [7]unsigned.Uint128) {
+	unsafe {
+		vmemset(voidptr(&data[0]), 0, 7 * sizeof(unsigned.Uint128))
+	}
+}
+
 // crypto_wipe_4xu64 zeroes a 4-element u64 array.
 @[direct_array_access; inline]
 fn crypto_wipe_4xu64(mut values [4]u64) {

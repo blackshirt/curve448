@@ -6,7 +6,10 @@
 // key exchange (ECDH) mechanism through curve448 curve, offering 224 bits of security.
 module curve448
 
+// Its also applied to point size, in bytes.
 const scalar_size = 56
+
+// base_point for Curve448
 const base_point = Field{
 	el: [u64(5), 0, 0, 0, 0, 0, 0, 0]!
 }
