@@ -567,6 +567,7 @@ fn fe_abs(mut z Field, u Field) {
 	mut x := Field{}
 	fe_negate(mut x, u)
 	fe_cselect(mut z, x, u, u.is_negative())
+	fe_clear(mut x)
 }
 
 // is_negative reports whether this field element is "negative".
@@ -629,6 +630,35 @@ fn fe_sqr(mut z Field, a Field) {
 	fe_sqr_karatsuba(mut z, a)
 }
 
+// fe_sqr_n squares x, n times: z = x^(2^n) (mod p).
+//
+// Its taken approach from openssl gf_sqrn
+// Unrolls squarings in pairs to reduce function-call overhead and
+// improve register allocation in the hot exponentiation loops.
+// When n is odd, one squaring is done first; the remainder (now even)
+// is processed in pairs via a scratch temporary.
+//
+// Preconditions: n > 0.
+@[direct_array_access; inline]
+fn fe_sqr_n(mut z Field, x Field, n int) {
+	assert n > 0
+	mut tmp := Field{}
+	if n & 1 != 0 {
+		fe_sqr_karatsuba(mut z, x)
+		n--
+	} else {
+		fe_sqr_karatsuba(mut tmp, x)
+		fe_sqr_karatsuba(mut z, tmp)
+		n -= 2
+	}
+	for n > 0 {
+		fe_sqr_karatsuba(mut tmp, z)
+		fe_sqr_karatsuba(mut z, tmp)
+		n -= 2
+	}
+	fe_clear(mut tmp)
+}
+		
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
 //
 // Split each 448-bit input into low and high 224-bit halves (4 limbs each):
@@ -849,8 +879,8 @@ fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64
 // The result is a 448-bit value stored in 7 limbs of 128 bits each.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	// clears destination output
-	clear_7xuint128(mut t)
+	// No need to clear out a new initialized t.
+	//
 	// Basic 4x4 schoolbook multiply, x * y
 	//
 	//                            x3 x2 x1 x0
