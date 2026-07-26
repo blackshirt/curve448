@@ -63,7 +63,8 @@ fn mult_56(a u64, b u32) (u64, u64) {
 @[inline]
 fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
 	lo := t.lo + c
-	hi := t.hi + if lo < c { u64(1) } else { u64(0) }
+	// Thisa basically same with t.hi + if lo < c { u64(1) } else { u64(0) }
+	hi := t.hi + u64(lo < c) // branchless, compiles to ADC/CMOV
 	return lo, hi
 }
 

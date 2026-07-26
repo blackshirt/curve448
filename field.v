@@ -527,8 +527,10 @@ fn fe_power446(mut v Field, z Field) {
 	fe_sqr_n(mut x, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
 	fe_mult(mut v, x, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
 
-	// wipe temporary sensitive materials
+	// wipe temporary vars
 	//
+	// Disabled on localized hot-path
+	/*
 	fe_clear(mut t1)
 	fe_clear(mut t2)
 	fe_clear(mut t3)
@@ -540,6 +542,7 @@ fn fe_power446(mut v Field, z Field) {
 	fe_clear(mut t222)
 	fe_clear(mut t223)
 	fe_clear(mut x)
+	*/
 }
 
 // fe_sqrtratio computes the square root of the ratio u/v (mod p).
@@ -565,8 +568,8 @@ fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 	is_square := fe_cmp(ck, u)
 
 	// explicitly wipe sensitive data before return.
-	fe_clear(mut uv)
-	fe_clear(mut ck)
+	// fe_clear(mut uv)
+	// fe_clear(mut ck)
 
 	return r, is_square
 }
@@ -581,7 +584,7 @@ fn fe_abs(mut z Field, u Field) {
 	mut x := Field{}
 	fe_negate(mut x, u)
 	fe_cselect(mut z, x, u, u.is_negative())
-	fe_clear(mut x)
+	// fe_clear(mut x)
 }
 
 // is_negative reports whether this field element is "negative".
@@ -596,7 +599,7 @@ fn (v Field) is_negative() int {
 	fe_reduce(mut x)
 
 	is_negative := int(x.el[0] & 1)
-	fe_clear(mut x)
+	// fe_clear(mut x)
 
 	return is_negative
 }
@@ -671,7 +674,7 @@ fn fe_sqr_n(mut z Field, x Field, n int) {
 		fe_sqr_karatsuba(mut z, tmp)
 		m -= 2
 	}
-	fe_clear(mut tmp)
+	// fe_clear(mut tmp)
 }
 
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
@@ -735,9 +738,10 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	// inputs are secret. V zero-initializes fresh arrays, but does not
 	// guarantee clearing of intermediate stack values.
 	//
-	crypto_wipe_7xuint128(mut z0)
-	crypto_wipe_7xuint128(mut z1)
-	crypto_wipe_7xuint128(mut z2)
+	// Temporarily we disabled this clearing on localized hot-path
+	// crypto_wipe_7xuint128(mut z0)
+	// crypto_wipe_7xuint128(mut z1)
+	// crypto_wipe_7xuint128(mut z2)
 }
 
 // fe_sqr_karatsuba squares a field element using optimized Karatsuba.
@@ -784,9 +788,10 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
 
 	// clear out temporary vars
-	crypto_wipe_7xuint128(mut z0)
-	crypto_wipe_7xuint128(mut z1)
-	crypto_wipe_7xuint128(mut z2)
+	// NOTE: we disabled it on localized hot-path
+	// crypto_wipe_7xuint128(mut z0)
+	// crypto_wipe_7xuint128(mut z1)
+	// crypto_wipe_7xuint128(mut z2)
 }
 
 // Solinas Reduction: direct fold (no intermediate r[0..14] array)
@@ -907,10 +912,11 @@ fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u6
 	//  t6   t5    t4    t3    t2    t1    t0
 	// ----------------------------------------
 	// Row 0: x0 · [y0, y1, y2, y3]
-	t[0] = add_128(t[0], mult_64(x0, y0))
-	t[1] = add_128(t[1], mult_64(x0, y1))
-	t[2] = add_128(t[2], mult_64(x0, y2))
-	t[3] = add_128(t[3], mult_64(x0, y3))
+	// Direct assignment
+	t[0] = mult_64(x0, y0)
+	t[1] = mult_64(x0, y1)
+	t[2] = mult_64(x0, y2)
+	t[3] = mult_64(x0, y3)
 
 	// Row 1: x1 · [y0, y1, y2, y3]
 	t[1] = add_128(t[1], mult_64(x1, y0))
@@ -1155,25 +1161,49 @@ fn fe_reduce(mut x Field) {
 	// Compute x + 2²²⁴ + 1. If this overflows 448 bits (carry out = 1),
 	// then x >= p and we must subtract p.
 	mut c := u64(1) // +1 at bit 0
-	for i := 0; i < 8; i++ {
-		// Branchless: add = 1 when i == 4 (the 2²²⁴ term), else 0.
-		add := u64(1) - ((u64(i ^ 4) | (0 - u64(i ^ 4))) >> 63)
-		s := x.el[i] + add + c
-		c = s >> limb_bits_size
-	}
+	// Unrolling the loop
+	c = (x.el[0] + c) >> 56
+	c = (x.el[1] + c) >> 56
+	c = (x.el[2] + c) >> 56
+	c = (x.el[3] + c) >> 56
+	c = (x.el[4] + 1 + c) >> 56 // +1 for 2^224
+	c = (x.el[5] + c) >> 56
+	c = (x.el[6] + c) >> 56
+	c = (x.el[7] + c) >> 56
 
 	// Step 3: Subtract p by adding c·(2²²⁴ + 1) to x.
 	// When c == 1, this effectively subtracts p (since 2⁴⁴⁸ ≡ 2²²⁴ + 1).
 	x.el[0] += c
 	x.el[4] += c
 
-	// Step 4: Propagate new carries and normalize.
+	// Step 4: Propagate new carries and normalize, do with loop unrolling
 	c = 0
-	for i := 0; i < 8; i++ {
-		s := x.el[i] + c
-		x.el[i] = s & mask_56bits
-		c = s >> limb_bits_size
-	}
+	// vfmt on
+	mut s := x.el[0] + c
+	x.el[0] = s & mask_56bits
+	c = s >> 56
+	s = x.el[1] + c
+	x.el[1] = s & mask_56bits
+	c = s >> 56
+	s = x.el[2] + c
+	x.el[2] = s & mask_56bits
+	c = s >> 56
+	s = x.el[3] + c
+	x.el[3] = s & mask_56bits
+	c = s >> 56
+	s = x.el[4] + c
+	x.el[4] = s & mask_56bits
+	c = s >> 56
+	s = x.el[5] + c
+	x.el[5] = s & mask_56bits
+	c = s >> 56
+	s = x.el[6] + c
+	x.el[6] = s & mask_56bits
+	c = s >> 56
+	s = x.el[7] + c
+	x.el[7] = s & mask_56bits
+	c = s >> 56
+	// vfmt off
 
 	// Final safety pass: absorb any remaining carry from the subtraction.
 	fe_weak_reduce(mut x)
@@ -1192,21 +1222,39 @@ fn fe_reduce(mut x Field) {
 @[direct_array_access; inline]
 fn fe_weak_reduce(mut x Field) {
 	mut c := u64(0)
+	// We do fully 2-loop unroll into straight-line code. Unrolling removes 16 loop iterations
+	// and 2 fold-back branches per call. This eliminates loop overhead
+	// and gives the register allocator full visibility.
+	//
+	// Pass 1, extract 56-bit limbs and propagate carries.
+	// vfmt off
+	mut s := x.el[0] + c;
+	x.el[0] = s & mask_56bits; c = s >> 56;	s = x.el[1] + c
+	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
+	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c
+	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c
+	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c
+	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
+	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
+	x.el[7] = s & mask_56bits; c = s >> 56
+	// 1-st Solinas reduction
+	x.el[0] += c
+	x.el[4] += c
 
-	// Pass 1 & 2: Extract 56-bit limbs and propagate carries.
-	for _ in 0 .. 2 {
-		for i := 0; i < 8; i++ {
-			s := x.el[i] + c
-			x.el[i] = s & mask_56bits
-			c = s >> limb_bits_size
-		}
-		// Fold overflow carry back into limbs 0 and 4.
-		x.el[0] += c
-		x.el[4] += c
-		// Reset carry for the next pass, which will sweep any new
-		// overflows created by the additions to el[0] and el[4].
-		c = 0
-	}
+	// Pass 2, extract 56-bit limbs and propagate carries once again
+	c = x.el[0] >> 56;
+	x.el[0] &= mask_56bits; s = x.el[1] + c
+	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
+	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c
+	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c
+	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c
+	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
+	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
+	x.el[7] = s & mask_56bits; c = s >> 56
+	// 2-nd Solinas reduction
+	x.el[0] += c
+	x.el[4] += c
+	// vfmt on
 
 	// Final ripple: handle any single-bit overflow in el[0] or el[4]
 	// that remains after the two passes.
