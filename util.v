@@ -78,7 +78,8 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 	lo := a.lo - b.lo
 	// This is intended to use branch for perf reason.
 	// For constant time, use bits trick instead.
-	borrow := if a.lo < b.lo { u64(1) } else { u64(0) }
+	// borrow := if a.lo < b.lo { u64(1) } else { u64(0) }
+	borrow := u64(a.lo < b.lo) // compiles to SETB or CMOV, zero cycles on modern uarch
 	hi := a.hi - b.hi - borrow
 	return unsigned.uint128_new(lo, hi)
 }

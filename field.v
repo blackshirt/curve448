@@ -224,7 +224,8 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	z.el[7] += c6
 
 	// Step 3: Normalize any new overflows from carry propagation.
-	fe_weak_reduce(mut z)
+	// fe_weak_reduce(mut z)
+	fe_weak_reduce_1pass(mut z)
 }
 
 // fe_negate computes the additive inverse: z = -a (mod p).
@@ -282,7 +283,8 @@ fn fe_negate(mut z Field, a Field) {
 	z.el[7] += c6
 
 	// Step 3: Normalize.
-	fe_weak_reduce(mut z)
+	// fe_weak_reduce(mut z)
+	fe_weak_reduce_1pass(mut z)
 }
 
 // Comparison and Constant-Time Selection
@@ -636,7 +638,7 @@ fn fe_is_zero(mut x Field) int {
 //
 // Currently routes through Karatsuba multiplication (fe_mult_karatsuba).
 // TODO: Evaluate further optimizations (e.g., Toom-Cook, FFT-based).
-@[direct_array_access]
+@[direct_array_access; inline]
 fn fe_mult(mut z Field, x Field, y Field) {
 	fe_mult_karatsuba(mut z, x, y)
 }
@@ -664,20 +666,22 @@ fn fe_sqr(mut z Field, a Field) {
 @[direct_array_access; inline]
 fn fe_sqr_n(mut z Field, x Field, n int) {
 	assert n > 0
-	mut m := n
-	mut tmp := Field{}
-	if m & 1 != 0 {
+	// For small n (3, 9) used in fe_power446, the loop overhead is measurable.
+	// Add a hybrid approach
+	if n == 1 {
 		fe_sqr_karatsuba(mut z, x)
-		m--
+	} else if n == 2 {
+		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
+	} else if n == 3 {
+		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
 	} else {
-		fe_sqr_karatsuba(mut tmp, x)
-		fe_sqr_karatsuba(mut z, tmp)
-		m -= 2
-	}
-	for m > 0 {
-		fe_sqr_karatsuba(mut tmp, z)
-		fe_sqr_karatsuba(mut z, tmp)
-		m -= 2
+		fe_sqr_karatsuba(mut z, x)
+		for _ in 1 .. n {
+			fe_sqr_karatsuba(mut z, z)
+		}
 	}
 	// fe_clear(mut tmp)
 }
@@ -804,7 +808,7 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // fold_and_reduce_karatsuba reduces the three Karatsuba partial products
 // (z0, z1, z2) directly into z modulo p = 2⁴⁴⁸ - 2²²⁴ - 1, using the
 // Solinas identity B⁸ = B⁴ + 1, without ever materializing the
-// intermediate r[0..14] array that fold_and_reduce_15limb used to build.
+// intermediate r[0..14] array.
 //
 // z1 must already have had z0/z2 subtracted (the caller's own bias-trick
 // subtraction loop below) but still carries the +2¹²⁰ bias from that
@@ -1269,47 +1273,31 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[4] &= mask_56bits
 }
 
-// Solinas Reduction: 15-limb folding
-//
-// fold_and_reduce_15limb folds a 15-limb unreduced product r[0..14] modulo
-// p = 2⁴⁴⁸ - 2²²⁴ - 1 using the Solinas identity B⁸ = B⁴ + 1.
-//
-// Given a polynomial:
-//     R = r₀ + r₁·B + ... + r₁₄·B¹⁴
-//
-// We fold the high limbs (B⁸ and above) back down using:
-//     B⁸ = B⁴ + 1
-//     B⁹ = B⁵ + B
-//     ...
-//     B¹⁴ = B¹⁰ + B⁶
-//
-// Terms that land at B⁸..B¹⁰ from the first fold are folded once more.
-// The final 8 accumulators are passed to reduce_8limb_product.
+// fe_weak_reduce_1pass is specialized reducer. Its acts like fe_weak_reduce,
+// but instead two's pass its do reducing in single-pass for use within
+// fe_sub and fe_negate call.
 @[direct_array_access; inline]
-fn fold_and_reduce_15limb(mut z Field, r [15]unsigned.Uint128) {
-	// Pre-compute 2 × r[12..14] for the second fold pass.
-	r12_x2 := lsh_128(r[12])
-	r13_x2 := lsh_128(r[13])
-	r14_x2 := lsh_128(r[14])
+fn fe_weak_reduce_1pass(mut x Field) {
+	mut c := u64(0)
+	mut s := x.el[0] + c
+	// vfmt off
+  x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c;
+  x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c;
+  x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c;
+  x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c;
+  x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c;
+  x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c;
+  x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c;
+  x.el[7] = s & mask_56bits; c = s >> 56
+	// vfmt on
 
-	// First fold: distribute r[8..14] according to B⁸ = B⁴ + 1.
-	// r[8]  → t0 (×1) and t4 (×1)
-	// r[9]  → t1 (×1) and t5 (×1)
-	// r[10] → t2 (×1) and t6 (×1)
-	// r[11] → t3 (×1) and t7 (×1)
-	// r[12] → t0 (×1) and t4 (×2)  [because B¹² = B⁸·B⁴ = (B⁴+1)·B⁴ = B⁸+B⁴]
-	// r[13] → t1 (×1) and t5 (×2)
-	// r[14] → t2 (×1) and t6 (×2)
-	mut t0 := add_128(r[0], add_128(r[8], r[12]))
-	mut t1 := add_128(r[1], add_128(r[9], r[13]))
-	mut t2 := add_128(r[2], add_128(r[10], r[14]))
-	mut t3 := add_128(r[3], r[11])
+	// Solinas reduction
+	x.el[0] += c
+	x.el[4] += c
 
-	mut t4 := add_128(r[4], add_128(r[8], r12_x2))
-	mut t5 := add_128(r[5], add_128(r[9], r13_x2))
-	mut t6 := add_128(r[6], add_128(r[10], r14_x2))
-	mut t7 := add_128(r[7], r[11])
-
-	// Pass the 8 accumulators to the 128-bit → 56-bit carry sweep.
-	reduce_8limb_product(mut z, t0, t1, t2, t3, t4, t5, t6, t7)
+	// Final ripple
+	x.el[1] += x.el[0] >> 56
+	x.el[0] &= mask_56bits
+	x.el[5] += x.el[4] >> 56
+	x.el[4] &= mask_56bits
 }
