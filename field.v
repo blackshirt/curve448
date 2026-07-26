@@ -132,9 +132,14 @@ fn fe_clear(mut z Field) {
 // Equivalent to: z = x
 @[direct_array_access; inline]
 fn fe_clone(mut z Field, x Field) {
-	for i := 0; i < 8; i++ {
-		z.el[i] = x.el[i]
-	}
+	z.el[0] = x.el[0]
+	z.el[1] = x.el[1]
+	z.el[2] = x.el[2]
+	z.el[3] = x.el[3]
+	z.el[4] = x.el[4]
+	z.el[5] = x.el[5]
+	z.el[6] = x.el[6]
+	z.el[7] = x.el[7]
 }
 
 // fe_add computes modular field addition: z = a + b (mod p).
@@ -304,7 +309,7 @@ fn fe_equal(a Field, b Field) bool {
 //   3. Return 1 if c == 0, else 0, computed branchlessly.
 @[direct_array_access; inline]
 fn fe_cmp(a Field, b Field) int {
-	// Step 1: Reduce to canonical representation.
+	// Step 1: Reduce to canonical representation
 	mut x := a
 	mut y := b
 	fe_reduce(mut x)
@@ -412,7 +417,7 @@ fn fe_inverse(mut z Field, x Field) {
 	fe_sqr_n(mut t, t, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 	fe_mult(mut z, t, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
 	// clear out t
-	fe_clear(mut t)
+	// fe_clear(mut t)
 }
 
 // fe_power446 computes v = z^((p-3)/4) (mod p), where:
@@ -872,11 +877,11 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 // fresh `[7]unsigned.Uint128{}` literal, which V zero-initializes.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
-	// Diagonal terms: x_i · x_i
-	t[0] = add_128(t[0], mult_64(x0, x0))
-	t[2] = add_128(t[2], mult_64(x1, x1))
-	t[4] = add_128(t[4], mult_64(x2, x2))
-	t[6] = add_128(t[6], mult_64(x3, x3))
+	// Diagonal terms: x_i · x_i, with direct assignment
+	t[0] = mult_64(x0, x0)
+	t[2] = mult_64(x1, x1)
+	t[4] = mult_64(x2, x2)
+	t[6] = mult_64(x3, x3)
 
 	// Cross terms: 2 · (x_i · x_j) for i < j, computed as left-shift.
 	t[1] = add_128(t[1], lsh_128(mult_64(x0, x1)))
