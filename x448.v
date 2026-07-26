@@ -9,10 +9,10 @@ module curve448
 // Its also applied to point size, in bytes.
 const scalar_size = 56
 
-// base_point for Curve448
-const base_point = Field{
-	el: [u64(5), 0, 0, 0, 0, 0, 0, 0]!
-}
+// base_point for Curve448, 56-bytes
+const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0]
 
 // X448 diffie-helman key-exchange (ECDH) algorithm.
 //
@@ -152,8 +152,9 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if ret_is_zero == 1 {
 		return error('x448 bad input point: low order point')
 	}
-
-	out := ret.bytes()
+	// wiring ret into out
+	mut out := []u8{len: 56}
+	ret.bytes(mut out)!
 	return out
 }
 

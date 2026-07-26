@@ -90,7 +90,7 @@ fn test_rfc7448_4() ! {
 	exp_alice_pbk :=
 		hex.decode('9b08f7cc31b7e3e67d22d5aea121074a273bd2b83de09c63faa73d2c22c5d9bbc836647241d953d40c5b12da88120d53177f80e532c41fa0')!
 	// calculates alice pubkey
-	alice_pbk := x448(a, base_point.bytes())!
+	alice_pbk := x448(a, base_point)!
 	assert alice_pbk == exp_alice_pbk
 
 	// Bob's private key, b:
@@ -100,7 +100,7 @@ fn test_rfc7448_4() ! {
 	exp_bob_pbk :=
 		hex.decode('3eb7a829b0cd20f5bcfc0b599b6feccf6da4627107bdb0d4f345b43027d8b972fc3e34fb4232a13ca706dcb57aec3dae07bdc1c67bf33609')!
 	// Calculated Bob's public key
-	bob_pbk := x448(b, base_point.bytes())!
+	bob_pbk := x448(b, base_point)!
 	assert bob_pbk == exp_bob_pbk
 
 	// Alice calc shared secret
@@ -111,7 +111,7 @@ fn test_rfc7448_4() ! {
 
 fn test_validate_point() ! {
 	// 1. Valid base point
-	validate_point(base_point.bytes())!
+	validate_point(base_point)!
 
 	// 2. Bad point length
 	validate_point([]u8{len: 55}) or { assert err == error('x448: bad point length') }
@@ -147,6 +147,6 @@ fn test_validate_point() ! {
 	}
 
 	out_non_canonical := x448(k, p_plus_5_bytes)!
-	out_canonical := x448(k, base_point.bytes())!
+	out_canonical := x448(k, base_point)!
 	assert out_non_canonical == out_canonical
 }

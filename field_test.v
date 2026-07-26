@@ -833,6 +833,7 @@ const high_carry_reduction_vectors = [
 ]
 
 fn test_canonical_encoding_boundaries() ! {
+	mut encoded := []u8{len: 56}
 	for item in canonical_encoding_vectors {
 		mut x := Field{}
 		x.set_bytes(item.encoded) or {
@@ -841,7 +842,7 @@ fn test_canonical_encoding_boundaries() ! {
 		fe_reduce(mut x)
 		assert x == item.reduced
 
-		encoded := x.bytes()
+		x.bytes(mut encoded)!
 		mut round_trip := Field{}
 		round_trip.set_bytes(encoded) or {
 			assert err == error('non-canonical field element (x >= p)')
