@@ -1052,13 +1052,14 @@ fn (mut z Field) set_bytes_loosely(b []u8) ! {
 // If called on a partially-reduced value, it may return false even
 // though the true value is < p. For reliable results, call fe_reduce first.
 fn (z Field) is_canonical() bool {
-	// Quick reject: any limb exceeding 56 bits is definitely non-canonical
-	// (or at least not fully reduced).
-	for i := 0; i < 8; i++ {
-		if z.el[i] > mask_56bits {
-			return false
-		}
-	}
+	// This check for limbs that exceeding 56-bits.
+	// but, instead return false early to reject that limb if it happen.
+	// we xor-ed all limbs to make it branchless and resistent from
+	// timing side effect.
+	mut exceed_56bits:= u64(0)
+    for i := 0; i < 8; i++ {
+        exceed_56bits |= (z.el[i] >> 56)
+    }
 
 	// Constant-time test: compute z + 2²²⁴ + 1 and check for overflow.
 	// 2²²⁴ + 1 in limb form is: [1, 0, 0, 0, 1, 0, 0, 0].
@@ -1071,7 +1072,9 @@ fn (z Field) is_canonical() bool {
 	}
 
 	// c == 1 means z + 2²²⁴ + 1 >= 2⁴⁴⁸, therefore z >= p.
-	return c == 0
+	// So,wr use xor-ed branchless and carry test to test
+	// the result.
+	return (exceed_56bits | c) == 0
 }
 
 // bytes serializes a field element into a 56-byte little-endian array.
