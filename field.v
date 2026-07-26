@@ -16,7 +16,6 @@
 // optimizing away the branchless patterns used here.
 module curve448
 
-import math.bits
 import math.unsigned
 
 // Module Constants
@@ -408,9 +407,9 @@ fn fe_cswap(mut a Field, mut b Field, c int) {
 fn fe_inverse(mut z Field, x Field) {
 	mut t := Field{}
 	fe_power446(mut t, x)
-	fe_sqr(mut t, t)
-	fe_sqr(mut t, t) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
-
+	// fe_sqr(mut t, t)
+	// fe_sqr(mut t, t) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
+	fe_sqr_n(mut t, t, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 	fe_mult(mut z, t, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
 	// clear out t
 	fe_clear(mut t)
@@ -450,54 +449,68 @@ fn fe_power446(mut v Field, z Field) {
 
 	// t6 = z^(2⁶ - 1)
 	mut t6 := Field{}
-	fe_sqr(mut t6, t3)
-	fe_sqr(mut t6, t6)
-	fe_sqr(mut t6, t6)
+	// fe_sqr(mut t6, t3)
+	// fe_sqr(mut t6, t6)
+	// fe_sqr(mut t6, t6)
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t6, t3, 3) // t6 = z^(7·2³) = z^(2⁶-2³)
 	fe_mult(mut t6, t6, t3) // t6 = z⁶³ = z^(2⁶-1)
 
 	// t9 = z^(2⁹ - 1)
 	mut t9 := Field{}
-	fe_sqr(mut t9, t6)
-	fe_sqr(mut t9, t9)
-	fe_sqr(mut t9, t9)
+	// fe_sqr(mut t9, t6)
+	// fe_sqr(mut t9, t9)
+	// fe_sqr(mut t9, t9)
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t9, t6, 3) // t9 = z^((2⁶-1)·2³) = z^(2⁹-2³)
 	fe_mult(mut t9, t9, t3) // t9 = z⁵¹¹ = z^(2⁹-1)
 
 	// t18 = z^(2¹⁸ - 1)
 	mut t18 := Field{}
-	fe_sqr(mut t18, t9)
-	for i := 1; i < 9; i++ {
-		fe_sqr(mut t18, t18)
-	}
+	// fe_sqr(mut t18, t9)
+	// for i := 1; i < 9; i++ {
+	//  	fe_sqr(mut t18, t18)
+	// }
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t18, t9, 9) // t18 = z^((2⁹-1)·2⁹) = z^(2¹⁸-2⁹)
 	fe_mult(mut t18, t18, t9) // t18 = z^(2¹⁸-1)
 
 	// t37 = z^(2³⁷ - 1)
 	mut t37 := Field{}
-	fe_sqr(mut t37, t18)
-	for i := 1; i < 18; i++ {
-		fe_sqr(mut t37, t37)
-	}
+	// fe_sqr(mut t37, t18)
+	// for i := 1; i < 18; i++ {
+	//	fe_sqr(mut t37, t37)
+	// }
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t37, t18, 18) // t37 = z^((2¹⁸-1)·2¹⁸) = z^(2³⁶-2¹⁸)
 	fe_mult(mut t37, t37, t18)
 	fe_sqr(mut t37, t37)
 	fe_mult(mut t37, t37, z) // t37 = z^(2³⁷-1)
 
 	// t111 = z^(2¹¹¹ - 1)
 	mut t111 := Field{}
-	fe_sqr(mut t111, t37)
-	for i := 1; i < 37; i++ {
-		fe_sqr(mut t111, t111)
-	}
+	// fe_sqr(mut t111, t37)
+	// for i := 1; i < 37; i++ {
+	//	fe_sqr(mut t111, t111)
+	// }
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t111, t37, 37) // t111 = z^((2³⁷-1)·2³⁷) = z^(2⁷⁴-2³⁷)
 	fe_mult(mut t111, t111, t37)
-	for i := 0; i < 37; i++ {
-		fe_sqr(mut t111, t111)
-	}
+	// for i := 0; i < 37; i++ {
+	// 	fe_sqr(mut t111, t111)
+	// }
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t111, t111, 37) // t111 = z^((2⁷⁴-1)·2³⁷) = z^(2¹¹¹-2³⁷)
 	fe_mult(mut t111, t111, t37) // t111 = z^(2¹¹¹-1)
 
 	// t222 = z^(2²²² - 1)
 	mut t222 := Field{}
 	fe_sqr(mut t222, t111)
-	for i := 1; i < 111; i++ {
-		fe_sqr(mut t222, t222)
-	}
+	// for i := 1; i < 111; i++ {
+	// 	fe_sqr(mut t222, t222)
+	// }
+	// replaced with fe_sqr_n
+	fe_sqr_n(mut t222, t111, 111) // t222 = z^((2¹¹¹-1)·2¹¹¹) = z^(2²²²-2¹¹¹)
 	fe_mult(mut t222, t222, t111) // t222 = z^(2²²²-1)
 
 	// t223 = z^(2²²³ - 1)
@@ -507,10 +520,11 @@ fn fe_power446(mut v Field, z Field) {
 
 	// v = z^(2⁴⁴⁶ - 2²²² - 1)
 	mut x := Field{}
-	fe_sqr(mut x, t223)
-	for i := 1; i < 223; i++ {
-		fe_sqr(mut x, x)
-	}
+	// fe_sqr(mut x, t223)
+	// for i := 1; i < 223; i++ {
+	// 	fe_sqr(mut x, x)
+	// }
+	fe_sqr_n(mut x, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
 	fe_mult(mut v, x, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
 
 	// wipe temporary sensitive materials
@@ -632,7 +646,7 @@ fn fe_sqr(mut z Field, a Field) {
 
 // fe_sqr_n squares x, n times: z = x^(2^n) (mod p).
 //
-// Its taken approach from openssl gf_sqrn
+// Its taken approach from openssl version of `gf_sqrn()` routine.
 // Unrolls squarings in pairs to reduce function-call overhead and
 // improve register allocation in the hot exponentiation loops.
 // When n is odd, one squaring is done first; the remainder (now even)
@@ -642,23 +656,24 @@ fn fe_sqr(mut z Field, a Field) {
 @[direct_array_access; inline]
 fn fe_sqr_n(mut z Field, x Field, n int) {
 	assert n > 0
+	mut m := n
 	mut tmp := Field{}
-	if n & 1 != 0 {
+	if m & 1 != 0 {
 		fe_sqr_karatsuba(mut z, x)
-		n--
+		m--
 	} else {
 		fe_sqr_karatsuba(mut tmp, x)
 		fe_sqr_karatsuba(mut z, tmp)
-		n -= 2
+		m -= 2
 	}
-	for n > 0 {
+	for m > 0 {
 		fe_sqr_karatsuba(mut tmp, z)
 		fe_sqr_karatsuba(mut z, tmp)
-		n -= 2
+		m -= 2
 	}
 	fe_clear(mut tmp)
 }
-		
+
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
 //
 // Split each 448-bit input into low and high 224-bit halves (4 limbs each):
@@ -852,8 +867,6 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 // fresh `[7]unsigned.Uint128{}` literal, which V zero-initializes.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
-	// clears destination output
-	clear_7xuint128(mut t)
 	// Diagonal terms: x_i · x_i
 	t[0] = add_128(t[0], mult_64(x0, x0))
 	t[2] = add_128(t[2], mult_64(x1, x1))
@@ -972,16 +985,6 @@ fn reduce_8limb_product(mut z Field, t0 unsigned.Uint128, t1 unsigned.Uint128, t
 	fe_weak_reduce(mut z)
 }
 
-// add_u64_to_128 adds a u64 carry to a 128-bit value.
-//
-// Returns (lo, hi) where the result is hi·2⁶⁴ + lo.
-@[inline]
-fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
-	lo, carry := bits.add_64(t.lo, c, 0)
-	hi, _ := bits.add_64(t.hi, 0, carry)
-	return lo, hi
-}
-
 // Scalar Multiplication (by u32)
 //
 // fe_mult_32 multiplies a field element by a 32-bit scalar: z = x · y (mod p).
@@ -1086,10 +1089,10 @@ fn (z Field) is_canonical() bool {
 	// but, instead return false early to reject that limb if it happen.
 	// we xor-ed all limbs to make it branchless and resistent from
 	// timing side effect.
-	mut exceed_56bits:= u64(0)
-    for i := 0; i < 8; i++ {
-        exceed_56bits |= (z.el[i] >> 56)
-    }
+	mut exceed_56bits := u64(0)
+	for i := 0; i < 8; i++ {
+		exceed_56bits |= (z.el[i] >> 56)
+	}
 
 	// Constant-time test: compute z + 2²²⁴ + 1 and check for overflow.
 	// 2²²⁴ + 1 in limb form is: [1, 0, 0, 0, 1, 0, 0, 0].

@@ -57,14 +57,28 @@ fn mult_56(a u64, b u32) (u64, u64) {
 	return lo, hi
 }
 
-// sub_128 subtracts b from a.
+// add_u64_to_128 adds a u64 carry to a 128-bit value.
 //
-// PRECONDITION: a >= b. The caller must ensure this; behavior is undefined
-// otherwise (wrap-around in unsigned arithmetic).
+// Returns (lo, hi) where the result is hi·2⁶⁴ + lo.
+@[inline]
+fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
+	lo := t.lo + c
+	hi := t.hi + if lo < c { u64(1) } else { u64(0) }
+	return lo, hi
+}
+
+// sub_128 subtracts b from a, using a manual branch for the borrow
+// (same style as add_u64_to_128) instead of bits.sub_64.
+//
+// PRECONDITION: a >= b. The caller must ensure this; behavior is
+// undefined otherwise (wrap-around in unsigned arithmetic).
 @[inline]
 fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	lo, borrow := bits.sub_64(a.lo, b.lo, 0)
-	hi, _ := bits.sub_64(a.hi, b.hi, borrow)
+	lo := a.lo - b.lo
+	// This is intended to use branch for perf reason.
+	// For constant time, use bits trick instead.
+	borrow := if a.lo < b.lo { u64(1) } else { u64(0) }
+	hi := a.hi - b.hi - borrow
 	return unsigned.uint128_new(lo, hi)
 }
 
