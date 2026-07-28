@@ -235,7 +235,7 @@ fn fe_sub(mut z Field, a Field, b Field) {
 // Using 4×p instead of 2×p provides the same safety margin as fe_sub.
 @[direct_array_access; inline]
 fn fe_negate(mut z Field, a Field) {
-	// Step 1: Compute 4p - a per limb.
+	// Step 1: Compute 4p - a per limb, extract the carry
 	z0 := fe_4p_limbs[0] - a.el[0]
 	c0 := z0 >> limb_bits_size
 	z.el[0] = z0 & mask_56bits
@@ -281,7 +281,7 @@ fn fe_negate(mut z Field, a Field) {
 	z.el[7] += c6
 
 	// Step 3: Normalize.
-	// fe_weak_reduce(mut z)
+	// use fe_weak_reduce_1pass instead of fe_weak_reduce
 	fe_weak_reduce_1pass(mut z)
 }
 
@@ -412,12 +412,8 @@ fn fe_cswap(mut a Field, mut b Field, c int) {
 fn fe_inverse(mut z Field, x Field) {
 	mut t := Field{}
 	fe_power446(mut t, x)
-	// fe_sqr(mut t, t)
-	// fe_sqr(mut t, t) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 	fe_sqr_n(mut t, t, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 	fe_mult(mut z, t, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
-	// clear out t
-	// fe_clear(mut t)
 }
 
 // fe_power446 computes v = z^((p-3)/4) (mod p), where:
@@ -454,38 +450,24 @@ fn fe_power446(mut v Field, z Field) {
 
 	// t6 = z^(2⁶ - 1)
 	mut t6 := Field{}
-	// fe_sqr(mut t6, t3)
-	// fe_sqr(mut t6, t6)
-	// fe_sqr(mut t6, t6)
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t6, t3, 3) // t6 = z^(7·2³) = z^(2⁶-2³)
 	fe_mult(mut t6, t6, t3) // t6 = z⁶³ = z^(2⁶-1)
 
 	// t9 = z^(2⁹ - 1)
 	mut t9 := Field{}
-	// fe_sqr(mut t9, t6)
-	// fe_sqr(mut t9, t9)
-	// fe_sqr(mut t9, t9)
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t9, t6, 3) // t9 = z^((2⁶-1)·2³) = z^(2⁹-2³)
 	fe_mult(mut t9, t9, t3) // t9 = z⁵¹¹ = z^(2⁹-1)
 
 	// t18 = z^(2¹⁸ - 1)
 	mut t18 := Field{}
-	// fe_sqr(mut t18, t9)
-	// for i := 1; i < 9; i++ {
-	//  	fe_sqr(mut t18, t18)
-	// }
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t18, t9, 9) // t18 = z^((2⁹-1)·2⁹) = z^(2¹⁸-2⁹)
 	fe_mult(mut t18, t18, t9) // t18 = z^(2¹⁸-1)
 
 	// t37 = z^(2³⁷ - 1)
 	mut t37 := Field{}
-	// fe_sqr(mut t37, t18)
-	// for i := 1; i < 18; i++ {
-	//	fe_sqr(mut t37, t37)
-	// }
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t37, t18, 18) // t37 = z^((2¹⁸-1)·2¹⁸) = z^(2³⁶-2¹⁸)
 	fe_mult(mut t37, t37, t18)
@@ -501,9 +483,6 @@ fn fe_power446(mut v Field, z Field) {
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t111, t37, 37) // t111 = z^((2³⁷-1)·2³⁷) = z^(2⁷⁴-2³⁷)
 	fe_mult(mut t111, t111, t37)
-	// for i := 0; i < 37; i++ {
-	// 	fe_sqr(mut t111, t111)
-	// }
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t111, t111, 37) // t111 = z^((2⁷⁴-1)·2³⁷) = z^(2¹¹¹-2³⁷)
 	fe_mult(mut t111, t111, t37) // t111 = z^(2¹¹¹-1)
@@ -511,9 +490,6 @@ fn fe_power446(mut v Field, z Field) {
 	// t222 = z^(2²²² - 1)
 	mut t222 := Field{}
 	fe_sqr(mut t222, t111)
-	// for i := 1; i < 111; i++ {
-	// 	fe_sqr(mut t222, t222)
-	// }
 	// replaced with fe_sqr_n
 	fe_sqr_n(mut t222, t111, 111) // t222 = z^((2¹¹¹-1)·2¹¹¹) = z^(2²²²-2¹¹¹)
 	fe_mult(mut t222, t222, t111) // t222 = z^(2²²²-1)
@@ -525,29 +501,8 @@ fn fe_power446(mut v Field, z Field) {
 
 	// v = z^(2⁴⁴⁶ - 2²²² - 1)
 	mut x := Field{}
-	// fe_sqr(mut x, t223)
-	// for i := 1; i < 223; i++ {
-	// 	fe_sqr(mut x, x)
-	// }
 	fe_sqr_n(mut x, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
 	fe_mult(mut v, x, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
-
-	// wipe temporary vars
-	//
-	// Disabled on localized hot-path
-	/*
-	fe_clear(mut t1)
-	fe_clear(mut t2)
-	fe_clear(mut t3)
-	fe_clear(mut t6)
-	fe_clear(mut t9)
-	fe_clear(mut t18)
-	fe_clear(mut t37)
-	fe_clear(mut t111)
-	fe_clear(mut t222)
-	fe_clear(mut t223)
-	fe_clear(mut x)
-	*/
 }
 
 // fe_sqrtratio computes the square root of the ratio u/v (mod p).
@@ -572,10 +527,6 @@ fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 
 	is_square := fe_cmp(ck, u)
 
-	// explicitly wipe sensitive data before return.
-	// fe_clear(mut uv)
-	// fe_clear(mut ck)
-
 	return r, is_square
 }
 
@@ -589,7 +540,6 @@ fn fe_abs(mut z Field, u Field) {
 	mut x := Field{}
 	fe_negate(mut x, u)
 	fe_cselect(mut z, x, u, u.is_negative())
-	// fe_clear(mut x)
 }
 
 // is_negative reports whether this field element is "negative".
@@ -604,7 +554,6 @@ fn (v Field) is_negative() int {
 	fe_reduce(mut x)
 
 	is_negative := int(x.el[0] & 1)
-	// fe_clear(mut x)
 
 	return is_negative
 }
@@ -683,7 +632,6 @@ fn fe_sqr_n(mut z Field, x Field, n int) {
 			fe_sqr_karatsuba_raw(mut z, z)
 		}
 	}
-	// fe_clear(mut tmp)
 }
 
 // Scalar Multiplication (by u32)

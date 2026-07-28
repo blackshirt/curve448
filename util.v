@@ -30,7 +30,7 @@ fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 
 // shift_right_by56 returns a >> 56. a is assumed to be at most 117 bits.
 @[inline]
-fn shift_right_by56(mut a unsigned.Uint128) u64 {
+fn shift_right_by56(a unsigned.Uint128) u64 {
 	return (a.hi << 8) | (a.lo >> 56)
 }
 

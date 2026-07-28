@@ -243,14 +243,14 @@ fn fe_mult_generic(mut z Field, x Field, y Field) {
 	t7 = add_128(t7, a4b7)
 
 	// apply reduction
-	mut c0 := shift_right_by56(mut t0)
-	mut c1 := shift_right_by56(mut t1)
-	mut c2 := shift_right_by56(mut t2)
-	mut c3 := shift_right_by56(mut t3)
-	mut c4 := shift_right_by56(mut t4)
-	mut c5 := shift_right_by56(mut t5)
-	mut c6 := shift_right_by56(mut t6)
-	mut c7 := shift_right_by56(mut t7)
+	mut c0 := shift_right_by56(t0)
+	mut c1 := shift_right_by56(t1)
+	mut c2 := shift_right_by56(t2)
+	mut c3 := shift_right_by56(t3)
+	mut c4 := shift_right_by56(t4)
+	mut c5 := shift_right_by56(t5)
+	mut c6 := shift_right_by56(t6)
+	mut c7 := shift_right_by56(t7)
 
 	z.el[0] = (t0.lo & mask_56bits) + c7
 	z.el[1] = (t1.lo & mask_56bits) + c0
@@ -423,14 +423,14 @@ fn fe_sqr_generic(mut z Field, a Field) {
 	t7 = add_128(t7, lsh_128(a6a5))
 
 	// apply reduction
-	mut c0 := shift_right_by56(mut t0)
-	mut c1 := shift_right_by56(mut t1)
-	mut c2 := shift_right_by56(mut t2)
-	mut c3 := shift_right_by56(mut t3)
-	mut c4 := shift_right_by56(mut t4)
-	mut c5 := shift_right_by56(mut t5)
-	mut c6 := shift_right_by56(mut t6)
-	mut c7 := shift_right_by56(mut t7)
+	mut c0 := shift_right_by56(t0)
+	mut c1 := shift_right_by56(t1)
+	mut c2 := shift_right_by56(t2)
+	mut c3 := shift_right_by56(t3)
+	mut c4 := shift_right_by56(t4)
+	mut c5 := shift_right_by56(t5)
+	mut c6 := shift_right_by56(t6)
+	mut c7 := shift_right_by56(t7)
 
 	z.el[0] = (t0.lo & mask_56bits) + c7
 	z.el[1] = (t1.lo & mask_56bits) + c0
@@ -570,12 +570,6 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 	// 4. Solinas reduction, folding z0/z1/z2 directly without
 	//    materializing an intermediate r[0..14] array.
 	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
-
-	// clear out temporary vars
-	// NOTE: we disabled it on localized hot-path
-	// crypto_wipe_7xuint128(mut z0)
-	// crypto_wipe_7xuint128(mut z1)
-	// crypto_wipe_7xuint128(mut z2)
 }
 
 // fe_mult_karatsuba_raw is fe_mult_karatsuba's raw-pair equivalent: z = x*y
