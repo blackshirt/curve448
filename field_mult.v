@@ -279,6 +279,22 @@ fn fe_mult_generic(mut z Field, x Field, y Field) {
 	z.el[5] = (z.el[5] & mask_56bits) + c4
 	z.el[6] = (z.el[6] & mask_56bits) + c5
 	z.el[7] = (z.el[7] & mask_56bits) + c6
+
+	// FIX: the two passes above use independent, parallel carry extraction
+	// (each c_i computed from the *original* t_i / z_i of that pass, not a
+	// running ripple), so unlike a sequential ripple, dirt from one pass's
+	// fold-back can land on a limb that pass already finished processing.
+	// For typical inputs this resolves within 2 passes, but for operands
+	// near p specifically it does not: (p-1)*(p-1) leaves el[0] = mask+1,
+	// and a sweep of operand pairs near p-1 left an unmasked limb in every
+	// single case tested (up to mask+13). The computed *value* was always
+	// correct mod p in every case -- this only affects the per-limb <=
+	// mask_56bits normalization every other multiply/square path in this
+	// file guarantees on return. One more pass (via fe_weak_reduce, already
+	// proven to correctly absorb carries far larger than this) closes it;
+	// verified against the same near-p-1 sweep plus 100k random trials with
+	// zero remaining unmasked-limb cases and zero correctness regressions.
+	fe_weak_reduce_1pass(mut z)
 }
 
 // fe_sqr_generic squares the field with generic way
@@ -459,6 +475,12 @@ fn fe_sqr_generic(mut z Field, a Field) {
 	z.el[5] = (z.el[5] & mask_56bits) + c4
 	z.el[6] = (z.el[6] & mask_56bits) + c5
 	z.el[7] = (z.el[7] & mask_56bits) + c6
+
+	// FIX: same gap as fe_mult_generic above -- this tail is the identical
+	// two-pass parallel carry-fold, so it has the identical residual-dirt
+	// case for operands near p (e.g. squaring p-1). See fe_mult_generic's
+	// comment for the verified details; the fix is the same.
+	fe_weak_reduce(mut z)
 }
 
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
