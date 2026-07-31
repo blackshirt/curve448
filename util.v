@@ -28,18 +28,6 @@ fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 	return a.add(b)
 }
 
-// shift_right_by56 returns a >> 56. a is assumed to be at most 117 bits.
-@[inline]
-fn shift_right_by56(a unsigned.Uint128) u64 {
-	return (a.hi << 8) | (a.lo >> 56)
-}
-
-// lsh_256 does a << 2
-@[inline]
-fn lsh_256(a unsigned.Uint128) unsigned.Uint128 {
-	return unsigned.uint128_new(a.lo << 2, (a.hi << 2) | (a.lo >> 62))
-}
-
 // lsh_128 left-shifts a 128-bit value by 1 bit.
 //
 // Computes: result = a << 1
@@ -99,40 +87,10 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 // Helpers for wiping sensitive data securely
 //
 
-// clear_7xuint128 zeroes out a 7-element Uint128 array.
-@[direct_array_access; inline]
-fn clear_7xuint128(mut data [7]unsigned.Uint128) {
-	unsafe {
-		vmemset(voidptr(&data[0]), 0, 7 * 2 * 8)
-	}
-}
-
-// crypto_wipe_4xu64 zeroes a 4-element u64 array.
-@[direct_array_access; inline]
-fn crypto_wipe_4xu64(mut values [4]u64) {
-	secure_zero_ptr(voidptr(&values[0]), 4 * 8)
-}
-
 // crypto_wipe_8xu64 zeroes a 8-element u64 array.
 @[direct_array_access; inline]
 fn crypto_wipe_8xu64(mut values [8]u64) {
 	secure_zero_ptr(voidptr(&values[0]), 8 * 8)
-}
-
-// crypto_wipe_7xuint128 securely zeroises a 7-element Uint128 array.
-//
-// Uint128 field accumulators can contain secret-dependent products during X448.
-// Route through secure_zero_ptr so the wipe uses vmemset plus the same volatile
-// read barrier as byte-slice scalar clearing.
-@[direct_array_access; inline]
-fn crypto_wipe_7xuint128(mut values [7]unsigned.Uint128) {
-	secure_zero_ptr(voidptr(&values[0]), 7 * 16)
-}
-
-// crypto_wipe_15xuint128 zeroes a 15-element Uint128 array.
-@[direct_array_access; inline]
-fn crypto_wipe_15xuint128(mut values [15]unsigned.Uint128) {
-	secure_zero_ptr(voidptr(&values[0]), 15 * 16)
 }
 
 // secure_zero_ptr zeroises ptr data of length len using volatile byte pointer access.
@@ -377,37 +335,27 @@ fn reduce_8limb_product_raw(mut z Field, t_lo [8]u64, t_hi [8]u64) {
 }
 
 // fold_and_reduce_raw is fold_and_reduce_karatsuba's raw-pair equivalent.
-// Identical position mapping (including the a0/a1/a2 shared-subexpression
-// hoist -- each of (z1[4]+z2[0]), (z1[5]+z2[1]), (z1[6]+z2[2]) is used once
-// in t0/t1/t2 and again in t4/t5/t6, so computed once here, same as above):
-//
-//     t0 = z0[0] + z1[4] + z2[0] +   z2[4]
-//     t1 = z0[1] + z1[5] + z2[1] +   z2[5]
-//     t2 = z0[2] + z1[6] + z2[2] +   z2[6]
-//     t3 = z0[3]         + z2[3]
-//     t4 = z0[4] + z1[0] + z1[4] + z2[0] + 2*z2[4]
-//     t5 = z0[5] + z1[1] + z1[5] + z2[1] + 2*z2[5]
-//     t6 = z0[6] + z1[2] + z1[6] + z2[2] + 2*z2[6]
-//     t7 =         z1[3] + z2[3]
-//
-// z1_lo/z1_hi must already have z0/z2 subtracted (the caller's own
-// bias-trick subtraction loop) but still carry the +bias from that step;
-// this function removes the remaining bias internally, same as
-// fold_and_reduce_karatsuba does.
+// fold_and_reduce_raw is fold_and_reduce_karatsuba's raw-pair equivalent.
+// Operates directly on parallel (lo, hi u64) arrays instead of unsigned.Uint128 structs.
+// See fold_and_reduce_karatsuba in field_mult.v for full mathematical derivation.
 @[direct_array_access; inline]
 fn fold_and_reduce_raw(mut z Field, z0_lo [7]u64, z0_hi [7]u64, mut z1_lo [7]u64, mut z1_hi [7]u64, z2_lo [7]u64, z2_hi [7]u64, bias_lo u64, bias_hi u64) {
+	// Step 1: Remove subtraction bias from middle product z1_lo / z1_hi.
 	for i := 0; i < 7; i++ {
 		z1_lo[i], z1_hi[i] = sub128_raw(z1_lo[i], z1_hi[i], bias_lo, bias_hi)
 	}
 
+	// Step 2: Compute 2 * z2[4..6] via 1-bit left shifts on raw 128-bit pairs.
 	z2_4x2_lo, z2_4x2_hi := lsh128_raw(z2_lo[4], z2_hi[4])
 	z2_5x2_lo, z2_5x2_hi := lsh128_raw(z2_lo[5], z2_hi[5])
 	z2_6x2_lo, z2_6x2_hi := lsh128_raw(z2_lo[6], z2_hi[6])
 
+	// Step 3: Hoist shared subexpressions a0, a1, a2 (used in t0..t2 and t4..t6).
 	a0_lo, a0_hi := add128_raw(z1_lo[4], z1_hi[4], z2_lo[0], z2_hi[0])
 	a1_lo, a1_hi := add128_raw(z1_lo[5], z1_hi[5], z2_lo[1], z2_hi[1])
 	a2_lo, a2_hi := add128_raw(z1_lo[6], z1_hi[6], z2_lo[2], z2_hi[2])
 
+	// Step 4: Accumulate into 8 raw 128-bit accumulators t0..t7.
 	mut tmp_lo, mut tmp_hi := add128_raw(a0_lo, a0_hi, z2_lo[4], z2_hi[4])
 	t0_lo, t0_hi := add128_raw(z0_lo[0], z0_hi[0], tmp_lo, tmp_hi)
 
@@ -433,6 +381,7 @@ fn fold_and_reduce_raw(mut z Field, z0_lo [7]u64, z0_hi [7]u64, mut z1_lo [7]u64
 
 	t7_lo, t7_hi := add128_raw(z1_lo[3], z1_hi[3], z2_lo[3], z2_hi[3])
 
+	// Step 5: Package into flat u64 arrays and call reduce_8limb_product_raw.
 	t_lo := [t0_lo, t1_lo, t2_lo, t3_lo, t4_lo, t5_lo, t6_lo, t7_lo]!
 	t_hi := [t0_hi, t1_hi, t2_hi, t3_hi, t4_hi, t5_hi, t6_hi, t7_hi]!
 	reduce_8limb_product_raw(mut z, t_lo, t_hi)
