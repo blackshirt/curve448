@@ -2,20 +2,18 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
-// This file contains specialized operations for Field element.
-// Its defines multiplication and squaring backed by karatsuba algorithm
-// and the helpers for schoolbook multiply.
+// Specialized field multiplication and squaring for GF(p) where p = 2⁴⁴⁸ - 2²²⁴ - 1.
 //
-// Its implements three-variant of field multiplication, in the form of:
-// - Generic pen-and-paper schoolbook field multiplication, as a reference.
-// - Improved field multiplication through karatsuba algorithm, but use an unsigned.Uint128 internally
-// - Improved karatsuba (raw) field multiplication, but instead using unsigned.Uint128, its run
-//   on raw u64 pairs, as a default backend.
+// Implements three multiplication variants:
+// 1. Generic pen-and-paper schoolbook multiplication (reference implementation).
+// 2. 2-way Karatsuba multiplication using unsigned.Uint128 struct accumulators.
+// 3. Optimized 2-way Karatsuba multiplication operating directly on raw u64 register pairs
+//    (default high-performance backend).
 module curve448
 
 import math.unsigned
 
-// fe_mult_generic is a general and unoptimized schoolbook field multiplication
+// fe_mult_generic is a general reference schoolbook field multiplication: z = x · y (mod p).
 @[direct_array_access; inline]
 fn fe_mult_generic(mut z Field, x Field, y Field) {
 	// Limb multiplication works like pen-and-paper columnar multiplication, but

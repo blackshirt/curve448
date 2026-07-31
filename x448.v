@@ -2,31 +2,29 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
-// This module implements building block for elliptic-curve diffie-helman
-// key exchange (ECDH) mechanism through curve448 curve, offering 224 bits of security.
+// This module implements the core building blocks for Elliptic-Curve Diffie-Hellman
+// key exchange (ECDH) using Curve448 (Curve448-Goldilocks), offering ~224 bits of security.
 module curve448
 
-// Its also applied to point size, in bytes.
+// scalar_size is the byte length of scalars and point coordinates in X448 (56 bytes / 448 bits).
 const scalar_size = 56
 
-// base_point for Curve448, 56-bytes
+// base_point is the standard generator point u-coordinate for Curve448 in 56-byte little-endian format (u = 5).
 const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0]
 
-// X448 diffie-helman key-exchange (ECDH) algorithm.
+// X448 Diffie-Hellman key-exchange (ECDH) algorithm.
 //
-// This module implements the X448 primitive, as defined by [RFC 7748].
-// The primitive takes an input of two 56-byte values, the first was the scalar.
-// The scalar is internally "clamped" (some bits are set to specific values)
-// before used. The second being the representation of a point on Curve448
-// and the output point is encoded into little-endian of 56 bytes.
-// The `x448()` function implements the process described in RFC 7748 (section 5).
-// The `x448()` function accepts any input sequence of 56 bytes and reduces
-// non-canonical inputs modulo p per RFC 7748.
+// Implements the X448 function as defined in [RFC 7748 (Section 5)].
+// The function takes a 56-byte secret scalar and a 56-byte u-coordinate point representation.
+// The scalar is internally cloned and clamped (bits 0, 1 cleared; bit 447 set) before
+// scalar multiplication to prevent small-subgroup and timing attacks.
+//
+// Non-canonical input point bytes (u >= p) are automatically reduced modulo p per RFC 7748.
 //
 // See [RFC 7748]: https://datatracker.ietf.org/doc/html/rfc7748
-// Notes: scalar is cloned internally to avoid side-effects (mutating key in memory)
+// Note: The scalar buffer is cloned internally and zeroed upon completion to prevent key exposure.
 @[direct_array_access]
 pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if scalar.len != scalar_size {

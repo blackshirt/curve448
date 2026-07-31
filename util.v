@@ -2,7 +2,7 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
-// Some helpers used accross the module
+// Internal helper functions used across the curve448 module.
 module curve448
 
 import math.bits
@@ -75,7 +75,7 @@ fn mult_56(a u64, b u32) (u64, u64) {
 @[inline]
 fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
 	lo := t.lo + c
-	// Thisa basically same with t.hi + if lo < c { u64(1) } else { u64(0) }
+	// Equivalent to: t.hi + if lo < c { u64(1) } else { u64(0) }
 	hi := t.hi + u64(lo < c) // branchless, compiles to ADC/CMOV
 	return lo, hi
 }
@@ -99,7 +99,7 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 // Helpers for wiping sensitive data securely
 //
 
-// clear_7xuint128 reset out the data into 0.
+// clear_7xuint128 zeroes out a 7-element Uint128 array.
 @[direct_array_access; inline]
 fn clear_7xuint128(mut data [7]unsigned.Uint128) {
 	unsafe {
@@ -135,11 +135,7 @@ fn crypto_wipe_15xuint128(mut values [15]unsigned.Uint128) {
 	secure_zero_ptr(voidptr(&values[0]), 15 * 16)
 }
 
-// secure_zero_ptr zeroises ptr data with length len.
-//
-// NOTE: This code was working, but not guarantees.
-// Its depends on the backend generated output.
-// TODO: correct way to do this in v.
+// secure_zero_ptr zeroises ptr data of length len using volatile byte pointer access.
 @[inline]
 fn secure_zero_ptr(ptr voidptr, len int) {
 	if isnil(ptr) || len == 0 {
