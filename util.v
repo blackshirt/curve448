@@ -340,6 +340,51 @@ fn reduce_8limb_product_raw(mut z Field, t_lo [8]u64, t_hi [8]u64) {
 // See fold_and_reduce_karatsuba in field_mult.v for full mathematical derivation.
 @[direct_array_access; inline]
 fn fold_and_reduce_raw(mut z Field, z0_lo [7]u64, z0_hi [7]u64, mut z1_lo [7]u64, mut z1_hi [7]u64, z2_lo [7]u64, z2_hi [7]u64, bias_lo u64, bias_hi u64) {
+	// Field product of fe_mult_karatsuba, on unreduced form
+	// z0[0..6] = x0 · y0 => offsets B⁰ through B⁶
+	// z2[0..6]	= x1 · y1	=> offsets B⁸ through B¹⁴
+	// z1[0..6] = (x0+x1)(y0+y1) − z0 − z2 => offsets B⁴ through B¹⁰
+	//
+	// Represented on 15-limb array, low to high
+	//            r0      r1      r2    r3    r4    r5    r6    r7  |  r8    r9   r10   r11   | r12   r13   r14
+	// low z0:    z0[0]  z0[1]  z0[2] z0[3] z0[4] z0[5] z0[6]
+	// middle z1:                           z1[0] z1[1] z1[2] z1[3] | z1[4] z1[5] z1[6]       |
+	// high z2:                                                     | z2[0] z2[1] z2[2] z2[3] | z2[4] z2[5] z2[6]
+	//
+	// Using solinas identity,
+	// p = B⁸ − B⁴ − 1 or  B⁸ = B⁴ + 1 (mod p)
+	//
+	// From this, higher powers fold down:
+	// | Power  | Folded form |
+	// | ------ | ----------- |
+	// | B⁸     | B⁴ + 1      |
+	// | B⁹     | B⁵ + B      |
+	// | B¹⁰    | B⁶ + B²     |
+	// | B¹¹    | B⁷ + B³     |
+	// | B¹²    | 2·B⁴ + 1    |
+	// | B¹³    | 2·B⁵ + B    |
+	// | B¹⁴    | 2·B⁶ + B`   |
+	// ------------------------
+	// On folded 8-limbs, with solinas identity
+	//      t0      t1    t2    t3    t4    t5    t6    t7
+	// --------------------------------------------------------
+	//    z0[0]  z0[1]  z0[2] z0[3] z0[4] z0[5] z0[6]         | z0 term was unfolded
+	//                              z1[0] z1[1] z1[2] z1[3]   | low part of z1 term was unfolded
+	//    z1[4]  z1[5]  z1[6]       z1[4] z1[5] z1[6]         | high part of middle term z1 folded
+	//    z2[0]  z2[1]  z2[2] z2[3] z2[0] z2[1] z2[2] z2[3]   | high part of term z2 on 8-11 folded
+	//    z2[4]  z2[5]  z2[6]       z2[4] z2[5] z2[6]         | high part of term z2 on 12-14 folded twice
+	//                              z2[4] z2[5] z2[6]         | z2 term that folded twice
+	//
+	// After the folded step above, we have
+	// t0 = z0[0] + z1[4] + z2[0] + z2[4]
+	// t1 = z0[1] + z1[5] + z2[1] + z2[5]
+	// t2 = z0[2] + z1[6] + z2[2] + z2[6]
+	// t3 = z0[3] + z2[3]
+	// t4 = z0[4] + z1[0] + z1[4] + z2[0] + 2 * z2[4]
+	// t5 = z0[5] + z1[1] + z1[5] + z2[1] + 2 * z2[5]
+	// t6 = z0[6] + z1[2] + z1[6] + z2[2] + 2 * z2[6]
+	// t7 = z1[3] + z2[3]
+	//
 	// Step 1: Remove subtraction bias from middle product z1_lo / z1_hi.
 	for i := 0; i < 7; i++ {
 		z1_lo[i], z1_hi[i] = sub128_raw(z1_lo[i], z1_hi[i], bias_lo, bias_hi)
