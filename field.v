@@ -588,7 +588,7 @@ fn fe_is_zero(mut x Field) int {
 @[direct_array_access; inline]
 fn fe_mult(mut z Field, x Field, y Field) {
 	// See fe_mult_karatsuba implementation at field_mult.v file
-	fe_mult_karatsuba_raw(mut z, x, y)
+	fe_mult_karatsuba(mut z, x, y)
 }
 
 // Squaring
@@ -600,7 +600,7 @@ fn fe_mult(mut z Field, x Field, y Field) {
 @[direct_array_access; inline]
 fn fe_sqr(mut z Field, a Field) {
 	// See fe_sqr_karatsuba implementation at field_mult.v file
-	fe_sqr_karatsuba_raw(mut z, a)
+	fe_sqr_karatsuba(mut z, a)
 }
 
 // fe_sqr_n squares x, n times: z = x^(2^n) (mod p).
@@ -618,18 +618,18 @@ fn fe_sqr_n(mut z Field, x Field, n int) {
 	// For small n (3, 9) used in fe_power446, the loop overhead is measurable.
 	// Add a hybrid approach
 	if n == 1 {
-		fe_sqr_karatsuba_raw(mut z, x)
+		fe_sqr_karatsuba(mut z, x)
 	} else if n == 2 {
-		fe_sqr_karatsuba_raw(mut z, x)
-		fe_sqr_karatsuba_raw(mut z, z)
+		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
 	} else if n == 3 {
-		fe_sqr_karatsuba_raw(mut z, x)
-		fe_sqr_karatsuba_raw(mut z, z)
-		fe_sqr_karatsuba_raw(mut z, z)
+		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
 	} else {
-		fe_sqr_karatsuba_raw(mut z, x)
+		fe_sqr_karatsuba(mut z, x)
 		for _ in 1 .. n {
-			fe_sqr_karatsuba_raw(mut z, z)
+			fe_sqr_karatsuba(mut z, z)
 		}
 	}
 }
