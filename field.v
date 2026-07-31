@@ -822,32 +822,17 @@ fn fe_reduce(mut x Field) {
 
 	// Step 4: Propagate new carries and normalize, do with loop unrolling
 	c = 0
-	// vfmt on
-	mut s := x.el[0] + c
-	x.el[0] = s & mask_56bits
-	c = s >> 56
-	s = x.el[1] + c
-	x.el[1] = s & mask_56bits
-	c = s >> 56
-	s = x.el[2] + c
-	x.el[2] = s & mask_56bits
-	c = s >> 56
-	s = x.el[3] + c
-	x.el[3] = s & mask_56bits
-	c = s >> 56
-	s = x.el[4] + c
-	x.el[4] = s & mask_56bits
-	c = s >> 56
-	s = x.el[5] + c
-	x.el[5] = s & mask_56bits
-	c = s >> 56
-	s = x.el[6] + c
-	x.el[6] = s & mask_56bits
-	c = s >> 56
-	s = x.el[7] + c
-	x.el[7] = s & mask_56bits
-	c = s >> 56
 	// vfmt off
+	mut s := x.el[0] + c
+	x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c
+	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
+	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c
+	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c
+	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c
+	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
+	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
+	x.el[7] = s & mask_56bits; c = s >> 56
+	// vfmt on
 
 	// Final safety pass: absorb any remaining carry from the subtraction.
 	fe_weak_reduce(mut x)
