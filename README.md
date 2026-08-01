@@ -107,7 +107,7 @@ A 56-byte X448 secret scalar. Created via `generate_private_key()` or `new_priva
 
 | Method | Description |
 |---|---|
-| `pub_key() !PublicKey` | Derives the corresponding public key (scalar × base point). |
+| `public_key() !PublicKey` | Derives the corresponding public key (scalar × base point). |
 | `shared_secret(peer PublicKey) ![]u8` | Computes the ECDH shared secret. Returns an error on low-order output. |
 | `bytes() []u8` | Returns a copy of the raw scalar bytes. |
 | `zero()` | Wipes the scalar bytes in place. Call when the key is no longer needed. |
