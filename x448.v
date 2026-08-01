@@ -16,7 +16,7 @@ const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 
 // X448 Diffie-Hellman key-exchange (ECDH) algorithm.
 //
-// Implements the X448 function as defined in [RFC 7748 (Section 5)].
+// Implements the raw (low level) `x448` function as defined in [RFC 7748 (Section 5)].
 // The function takes a 56-byte secret scalar and a 56-byte u-coordinate point representation.
 // The scalar is internally cloned and clamped (bits 0, 1 cleared; bit 447 set) before
 // scalar multiplication to prevent small-subgroup and timing attacks.
@@ -25,6 +25,7 @@ const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 //
 // See [RFC 7748]: https://datatracker.ietf.org/doc/html/rfc7748
 // Note: The scalar buffer is cloned internally and zeroed upon completion to prevent key exposure.
+// For (recommended) higher level API, use type-based (PrivateKey and PublicKey) instead.
 @[direct_array_access]
 pub fn x448(scalar []u8, point []u8) ![]u8 {
 	if scalar.len != scalar_size {
