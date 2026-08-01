@@ -19,8 +19,8 @@
 // limb-bounded" representation the library's internal functions accept.
 module curve448
 
-import math.big
 import rand
+import math.big
 
 const property_iterations = 500
 

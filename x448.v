@@ -2,7 +2,7 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
-// This module implements the core building blocks for Elliptic-Curve Diffie-Hellman
+// This module implements the core low-level building blocks for Elliptic-Curve Diffie-Hellman
 // key exchange (ECDH) using Curve448 (Curve448-Goldilocks), offering ~224 bits of security.
 module curve448
 
