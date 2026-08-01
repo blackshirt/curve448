@@ -10,6 +10,8 @@ module curve448
 
 import math.unsigned
 
+const karatsuba_bias = unsigned.uint128_new(0, u64(1) << 56)
+
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
 //
 // Split each 448-bit input into low and high 224-bit halves (4 limbs each):
@@ -57,16 +59,14 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 
 	// Apply a bias of 2¹²⁰ to each z1 limb before subtraction to ensure
 	// non-negative intermediate values (since Uint128 has no signed mode).
-	bias := unsigned.uint128_new(0, u64(1) << 56)
-
 	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], bias)
+		z1_biased := add_128(z1[i], karatsuba_bias)
 		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
 	}
 
 	// 4. Reduce modulo p = 2⁴⁴⁸ - 2²²⁴ - 1, folding z0/z1/z2 directly
 	//    without materializing an intermediate r[0..14] array.
-	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
+	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, karatsuba_bias)
 }
 
 // fe_sqr_karatsuba squares a field element using optimized Karatsuba.
@@ -101,17 +101,15 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 
 	mul_4limb_schoolbook_square(mut z1, x01_0, x01_1, x01_2, x01_3)
 
-	// Bias to ensure non-negative subtraction.
-	bias := unsigned.uint128_new(0, u64(1) << 56)
-
+	// Add karatsuba bias to ensure non-negative subtraction.
 	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], bias)
+		z1_biased := add_128(z1[i], karatsuba_bias)
 		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
 	}
 
 	// 4. Solinas reduction, folding z0/z1/z2 directly without
 	//    materializing an intermediate r[0..14] array.
-	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias)
+	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, karatsuba_bias)
 }
 
 // Low-Level Limb Multiplication Primitives
@@ -230,7 +228,7 @@ fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u6
 // in the two hottest functions in this file (fe_sqr_karatsuba alone runs
 // ~400 times per fe_power446 call).
 @[direct_array_access; inline]
-fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsigned.Uint128, z2 [7]unsigned.Uint128, bias unsigned.Uint128) {
+fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsigned.Uint128, z2 [7]unsigned.Uint128, the_bias unsigned.Uint128) {
 	// Looks on previous product of fe_mult_karatsuba, on unreduced form
 	// z0[0..6] = x0 · y0 => offsets B⁰ through B⁶
 	// z2[0..6]	= x1 · y1	=> offsets B⁸ through B¹⁴
@@ -278,9 +276,14 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 	//
 	// Step 1: z1 middle term product from fe_mult(square)_karatsuba was added by bias value.
 	//         So, remove subtraction bias from middle product z1.
-	for i := 0; i < 7; i++ {
-		z1[i] = sub_128(z1[i], bias)
-	}
+	// Remove subtraction bias from middle product z1 (7 explicit lines — no loop).
+	z1[0] = sub_128(z1[0], the_bias)
+	z1[1] = sub_128(z1[1], the_bias)
+	z1[2] = sub_128(z1[2], the_bias)
+	z1[3] = sub_128(z1[3], the_bias)
+	z1[4] = sub_128(z1[4], the_bias)
+	z1[5] = sub_128(z1[5], the_bias)
+	z1[6] = sub_128(z1[6], the_bias)
 
 	// Step 2: Compute 2 * z2[4..6] via 1-bit left shift.
 	z2_4x2 := lsh_128(z2[4])

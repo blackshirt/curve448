@@ -144,7 +144,12 @@ pub fn x448(scalar []u8, point []u8) ![]u8 {
 	fe_inverse(mut ret, z2)
 	fe_mult(mut ret, x2, ret)
 
-	ret_is_zero := fe_cmp(ret, fe_zero)
+	// After — ret is produced by fe_mult(ret, x2, ret_inv) where both inputs
+	// went through fe_weak_reduce inside fe_mult_karatsuba. It is not
+	// guaranteed canonical yet, so reduce once then compare.
+	fe_reduce(mut ret)
+	ret_is_zero := fe_cmp_canonical(ret, fe_zero)
+
 	// Keep the low-order/all-zero API branch after wiping scalar and field
 	// temporaries. The ladder itself remains branch-free with respect to scalar
 	// bits; this branch only decides whether to return the already-computed output.

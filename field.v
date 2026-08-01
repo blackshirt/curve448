@@ -332,6 +332,23 @@ fn fe_cmp(a Field, b Field) int {
 	return int(1 - ((c | (0 - c)) >> 63))
 }
 
+// fe_cmp_canonical compares two field elements that are already in
+// canonical form (all limbs < 2^56, value < p).
+// No reduction is performed. Use only when both inputs are known canonical.
+@[direct_array_access; inline]
+fn fe_cmp_canonical(a Field, b Field) int {
+	mut c := u64(0)
+	c |= a.el[0] ^ b.el[0]
+	c |= a.el[1] ^ b.el[1]
+	c |= a.el[2] ^ b.el[2]
+	c |= a.el[3] ^ b.el[3]
+	c |= a.el[4] ^ b.el[4]
+	c |= a.el[5] ^ b.el[5]
+	c |= a.el[6] ^ b.el[6]
+	c |= a.el[7] ^ b.el[7]
+	return int(1 - ((c | (0 - c)) >> 63))
+}
+
 // fe_cselect performs a constant-time conditional selection.
 //
 // Sets z to a if c == 1, or to b if c == 0.
@@ -410,10 +427,10 @@ fn fe_cswap(mut a Field, mut b Field, c int) {
 //   z = t · x                                     [2⁴⁴⁸ - 2²²⁴ - 3]
 @[direct_array_access; inline]
 fn fe_inverse(mut z Field, x Field) {
-	mut t := Field{}
-	fe_power446(mut t, x)
-	fe_sqr_n(mut t, t, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
-	fe_mult(mut z, t, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
+	// removes temporary mut t := Field{}
+	fe_power446(mut z, x)
+	fe_sqr_n(mut z, z, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
+	fe_mult(mut z, z, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
 }
 
 // fe_power446 computes v = z^((p-3)/4) (mod p), where:
@@ -476,11 +493,6 @@ fn fe_power446(mut v Field, z Field) {
 
 	// t111 = z^(2¹¹¹ - 1)
 	mut t111 := Field{}
-	// fe_sqr(mut t111, t37)
-	// for i := 1; i < 37; i++ {
-	//	fe_sqr(mut t111, t111)
-	// }
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t111, t37, 37) // t111 = z^((2³⁷-1)·2³⁷) = z^(2⁷⁴-2³⁷)
 	fe_mult(mut t111, t111, t37)
 	// replaced with fe_sqr_n
@@ -489,8 +501,10 @@ fn fe_power446(mut v Field, z Field) {
 
 	// t222 = z^(2²²² - 1)
 	mut t222 := Field{}
-	fe_sqr(mut t222, t111)
-	// replaced with fe_sqr_n
+	// fe_sqr(mut t222, t111) writes t222 = t111², then fe_sqr_n(mut t222, t111, 111)
+	// overwrites t222 unconditionally starting from t111 again.
+	// The first call is a dead store. Remove it
+	// fe_sqr(mut t222, t111)
 	fe_sqr_n(mut t222, t111, 111) // t222 = z^((2¹¹¹-1)·2¹¹¹) = z^(2²²²-2¹¹¹)
 	fe_mult(mut t222, t222, t111) // t222 = z^(2²²²-1)
 
@@ -537,9 +551,9 @@ fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 // otherwise return u.
 @[direct_array_access; inline]
 fn fe_abs(mut z Field, u Field) {
-	mut x := Field{}
-	fe_negate(mut x, u)
-	fe_cselect(mut z, x, u, u.is_negative())
+	// mut x := Field{}
+	fe_negate(mut z, u)
+	fe_cselect(mut z, z, u, u.is_negative())
 }
 
 // is_negative reports whether this field element is "negative".

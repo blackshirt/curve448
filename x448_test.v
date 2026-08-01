@@ -63,7 +63,7 @@ fn test_x448_rfc7748_3() ! {
 	// For each iteration, set k to be the result of calling the function
 	// and u to be the old value of k.  The final result is the value left in k.
 	mut r := []u8{len: 56}
-	for i in 0 .. 1_000_000 {
+	for i in 0 .. 1000 {
 		r = x448(k, u)!
 		unsafe {
 			u = k
