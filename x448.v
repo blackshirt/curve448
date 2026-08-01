@@ -7,12 +7,12 @@
 module curve448
 
 // scalar_size is the byte length of scalars and point coordinates in X448 (56 bytes / 448 bits).
-const scalar_size = 56
+pub const scalar_size = 56
 
 // base_point is the standard generator point u-coordinate for Curve448 in 56-byte little-endian format (u = 5).
-const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+pub const base_point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0]
+	0, 0]
 
 // X448 Diffie-Hellman key-exchange (ECDH) algorithm.
 //

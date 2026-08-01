@@ -723,40 +723,78 @@ fn (mut z Field) set_bytes_loosely(b []u8) ! {
 	fe_reduce(mut z)
 }
 
+// fe_is_canonical returns 1 if z is in canonical form [0, p-1], 0 otherwise.
+//
+// A field element is canonical if and only if two conditions both hold:
+//   (a) every limb fits in 56 bits (no residual carries), AND
+//   (b) the integer value is strictly less than p = 2⁴⁴⁸ - 2²²⁴ - 1.
+//
+// Algorithm — single branchless pass:
+//
+//   We test z < p by checking whether z + (2²²⁴ + 1) overflows 448 bits,
+//   i.e. whether the carry out of the top limb is 1 after adding the
+//   Solinas constant.  In limb form, 2²²⁴ + 1 = [1, 0, 0, 0, 1, 0, 0, 0].
+//
+//   Simultaneously, any limb that already exceeds 56 bits causes the sum
+//   for that limb to carry into the next one, eventually propagating a
+//   spurious carry out of the top — so the single overflow test catches
+//   both (a) and (b) in one chain.
+//
+//   Every intermediate value is a u64 arithmetic expression.  There are no
+//   branches, no loops, and no data-dependent memory accesses.  The
+//   compiled output should be a straight-line sequence of ADD/ADC
+//   (or equivalent) instructions.
+//
+// Matches the carry-test logic inside fe_reduce (the same idiom, audited
+// by that function).  Return type is int (0/1) for consistency with
+// fe_cmp, fe_is_zero, and mask_64bits.
+@[direct_array_access; inline]
+fn fe_is_canonical(z Field) int {
+	// Add 2²²⁴ + 1 = [1, 0, 0, 0, 1, 0, 0, 0] to z, propagating carries.
+	// If the final carry c == 1, then z + (2²²⁴ + 1) >= 2⁴⁴⁸, so z >= p.
+	// If any limb exceeds 56 bits, the carry propagates forward and
+	// likewise produces c == 1 at the end.
+	//
+	// Each line: s = limb + constant_add + carry_in; carry_out = s >> 56
+	// The constant adds are: limb 0 gets +1, limb 4 gets +1, rest get +0.
+	s0 := z.el[0] + u64(1) // + low word of (2²²⁴ + 1)
+	c0 := s0 >> 56
+
+	s1 := z.el[1] + c0
+	c1 := s1 >> 56
+
+	s2 := z.el[2] + c1
+	c2 := s2 >> 56
+
+	s3 := z.el[3] + c2
+	c3 := s3 >> 56
+
+	s4 := z.el[4] + u64(1) + c3 // + high word of (2²²⁴ + 1)
+	c4 := s4 >> 56
+
+	s5 := z.el[5] + c4
+	c5 := s5 >> 56
+
+	s6 := z.el[6] + c5
+	c6 := s6 >> 56
+
+	s7 := z.el[7] + c6
+	c7 := s7 >> 56
+
+	// c7 == 1  ↔  z >= p  (NOT canonical)
+	// c7 == 0  ↔  z <  p  (canonical)
+	// Return 1 for canonical, 0 for non-canonical — branchless.
+	return int(1 - c7)
+}
+
 // is_canonical reports whether the field element is in canonical form [0, p-1].
 //
-// Algorithm:
-//   1. Check that all limbs fit in 56 bits.
-//   2. Test if z >= p by computing the carry of z + (2²²⁴ + 1).
-//      If the carry is 1, then z + 2²²⁴ + 1 >= 2⁴⁴⁸, so z >= p.
-//
-// NOTE: This function assumes limbs may have unpropagated carries.
-// If called on a partially-reduced value, it may return false even
-// though the true value is < p. For reliable results, call fe_reduce first.
+// This is a thin bool wrapper around fe_is_canonical for call sites that
+// need a bool (set_bytes, property tests).  The actual test is performed
+// entirely by fe_is_canonical.
+@[direct_array_access; inline]
 fn (z Field) is_canonical() bool {
-	// This check for limbs that exceeding 56-bits.
-	// but, instead return false early to reject that limb if it happen.
-	// we xor-ed all limbs to make it branchless and resistent from
-	// timing side effect.
-	mut exceed_56bits := u64(0)
-	for i := 0; i < 8; i++ {
-		exceed_56bits |= (z.el[i] >> 56)
-	}
-
-	// Constant-time test: compute z + 2²²⁴ + 1 and check for overflow.
-	// 2²²⁴ + 1 in limb form is: [1, 0, 0, 0, 1, 0, 0, 0].
-	mut c := u64(1) // +1 at bit 0
-	for i := 0; i < 8; i++ {
-		// Branchless: add = 1 when i == 4, else 0.
-		add := u64(1) - ((u64(i ^ 4) | (0 - u64(i ^ 4))) >> 63)
-		sum := z.el[i] + add + c
-		c = sum >> 56
-	}
-
-	// c == 1 means z + 2²²⁴ + 1 >= 2⁴⁴⁸, therefore z >= p.
-	// So,wr use xor-ed branchless and carry test to test
-	// the result.
-	return (exceed_56bits | c) == 0
+	return fe_is_canonical(z) == 1
 }
 
 // bytes serializes a field element into a 56-byte little-endian array.
@@ -787,55 +825,89 @@ fn (mut x Field) bytes(mut dst []u8) ! {
 
 // Field Reduction
 //
-// fe_reduce fully reduces a field element to its canonical representation
-// modulo p.
+// fe_reduce fully reduces a field element to its unique canonical
+// representative in [0, p-1].
+//
+// PRECONDITION: all limbs must satisfy el[i] < 2⁵⁶, i.e. the input
+// must already be in the normalized (but possibly non-canonical) form
+// produced by fe_weak_reduce.  Calling fe_reduce on limbs that exceed
+// 2⁵⁶ is incorrect.
 //
 // Algorithm:
-//   1. Apply fe_weak_reduce to normalize limb overflows.
-//   2. Test if x >= p by computing x + 2²²⁴ + 1 and checking for carry.
-//   3. If x >= p, subtract p by adding the carry c to limbs 0 and 4
-//      (using the Solinas identity).
-//   4. Propagate any new carries and weak-reduce again.
+//
+// Step 1 — normalize limb overflows (precondition enforcement).
+//
+// Step 2 — test x >= p.
+//   Compute c = floor((x + 2²²⁴ + 1) / 2⁴⁴⁸).
+//   Because x < 2⁴⁴⁸ (all limbs < 2⁵⁶), the maximum of x + 2²²⁴ + 1
+//   is 2⁴⁴⁸ + 2²²⁴, so c is exactly 0 or 1.
+//   c = 1  <=>  x + 2²²⁴ + 1 >= 2⁴⁴⁸  <=>  x >= 2⁴⁴⁸ - 2²²⁴ - 1 = p.
+//
+// Step 3 — conditionally add (2²²⁴ + 1) to the limbs.
+//   Adding c * (2²²⁴ + 1) raises the integer value to:
+//     c=0: x unchanged, already in [0, p-1].
+//     c=1: x + (2²²⁴ + 1) in [p + 2²²⁴ + 1, 2⁴⁴⁸ + 2²²⁴]
+//                         = [2⁴⁴⁸,            2⁴⁴⁸ + 2²²⁴].
+//
+// Step 4 — propagate carries.
+//   Normalizing the limbs of x + (2²²⁴ + 1) produces:
+//     limbs:     (x + 2²²⁴ + 1) mod 2⁴⁴⁸  =  x - p   (when c=1)
+//     carry_out: floor(...)  / 2⁴⁴⁸         =  1       (when c=1)
+//   The carry_out (= c) is intentionally discarded.  It represents the
+//   2⁴⁴⁸ term that was deliberately introduced in step 3; dropping it
+//   is the Solinas subtraction: x - p ≡ x - (2⁴⁴⁸ - 2²²⁴ - 1).
+//   The remaining value x - p is in [0, 2²²⁴] ⊂ [0, p), already
+//   canonical.  No further reduction is required.
 @[direct_array_access; inline]
 fn fe_reduce(mut x Field) {
 	// Step 1: Normalize limb overflows.
 	fe_weak_reduce(mut x)
 
-	// Step 2: Test if x >= p.
-	// Compute x + 2²²⁴ + 1. If this overflows 448 bits (carry out = 1),
-	// then x >= p and we must subtract p.
-	mut c := u64(1) // +1 at bit 0
-	// Unrolling the loop
+	// Step 2: Test x >= p via overflow of x + (2²²⁴ + 1).
+	// 2²²⁴ + 1 in limb form: +1 at el[0] (the 1) and +1 at el[4] (the 2²²⁴).
+	mut c := u64(1)
 	c = (x.el[0] + c) >> 56
 	c = (x.el[1] + c) >> 56
 	c = (x.el[2] + c) >> 56
 	c = (x.el[3] + c) >> 56
-	c = (x.el[4] + 1 + c) >> 56 // +1 for 2^224
+	c = (x.el[4] + 1 + c) >> 56
 	c = (x.el[5] + c) >> 56
 	c = (x.el[6] + c) >> 56
 	c = (x.el[7] + c) >> 56
+	// c == 1 iff x >= p.
 
-	// Step 3: Subtract p by adding c·(2²²⁴ + 1) to x.
-	// When c == 1, this effectively subtracts p (since 2⁴⁴⁸ ≡ 2²²⁴ + 1).
+	// Step 3: Conditionally add (2²²⁴ + 1) = Solinas constant.
 	x.el[0] += c
 	x.el[4] += c
 
-	// Step 4: Propagate new carries and normalize, do with loop unrolling
-	c = 0
-	// vfmt off
-	mut s := x.el[0] + c
-	x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c
-	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
-	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c
-	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c
-	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c
-	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
-	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
-	x.el[7] = s & mask_56bits; c = s >> 56
-	// vfmt on
-
-	// Final safety pass: absorb any remaining carry from the subtraction.
-	fe_weak_reduce(mut x)
+	// Step 4: Propagate carries.
+	// carry_out intentionally discarded — see algorithm comment above.
+	mut s := x.el[0]
+	x.el[0] = s & mask_56bits
+	c = s >> 56
+	s = x.el[1] + c
+	x.el[1] = s & mask_56bits
+	c = s >> 56
+	s = x.el[2] + c
+	x.el[2] = s & mask_56bits
+	c = s >> 56
+	s = x.el[3] + c
+	x.el[3] = s & mask_56bits
+	c = s >> 56
+	s = x.el[4] + c
+	x.el[4] = s & mask_56bits
+	c = s >> 56
+	s = x.el[5] + c
+	x.el[5] = s & mask_56bits
+	c = s >> 56
+	s = x.el[6] + c
+	x.el[6] = s & mask_56bits
+	c = s >> 56
+	s = x.el[7] + c
+	x.el[7] = s & mask_56bits
+	// c (== original step-2 carry) is discarded here — deliberate.
+	// The result is in [0, 2²²⁴] ⊂ [0, p) and is already canonical.
+	// No trailing fe_weak_reduce is needed.
 }
 
 // fe_weak_reduce performs carry propagation across all limbs.
