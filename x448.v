@@ -175,7 +175,12 @@ pub fn validate_point(point []u8) ! {
 	}
 	mut u := Field{}
 	u.set_bytes(point) or { return error('x448: non-canonical point') }
-	if fe_cmp(u, fe_zero) == 1 || fe_cmp(u, fe_one) == 1 || fe_cmp(u, fe_minus_one) == 1 {
+	// set_bytes guarantees u is canonical (rejected non-canonical input above).
+	// fe_zero, fe_one, fe_minus_one are module constants already in canonical form.
+	// Use fe_cmp_canonical for all three checks and combine branchlessly with |.
+	is_low_order := fe_cmp_canonical(u, fe_zero) | fe_cmp_canonical(u, fe_one) | fe_cmp_canonical(u,
+		fe_minus_one)
+	if is_low_order == 1 {
 		return error('x448: low order point')
 	}
 }

@@ -514,9 +514,9 @@ fn fe_power446(mut v Field, z Field) {
 	fe_mult(mut t223, t223, z) // t223 = z^(2²²³-1)
 
 	// v = z^(2⁴⁴⁶ - 2²²² - 1)
-	mut x := Field{}
-	fe_sqr_n(mut x, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
-	fe_mult(mut v, x, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
+	// reuse v instead defined a new Field
+	fe_sqr_n(mut v, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
+	fe_mult(mut v, v, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
 }
 
 // fe_sqrtratio computes the square root of the ratio u/v (mod p).
@@ -628,7 +628,9 @@ fn fe_sqr(mut z Field, a Field) {
 // Preconditions: n > 0.
 @[direct_array_access; inline]
 fn fe_sqr_n(mut z Field, x Field, n int) {
-	assert n > 0
+	if n <= 0 {
+		return
+	}
 	// For small n (3, 9) used in fe_power446, the loop overhead is measurable.
 	// Add a hybrid approach
 	if n == 1 {
@@ -638,6 +640,16 @@ fn fe_sqr_n(mut z Field, x Field, n int) {
 		fe_sqr_karatsuba(mut z, z)
 	} else if n == 3 {
 		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
+	} else if n == 9 {
+		fe_sqr_karatsuba(mut z, x)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
+		fe_sqr_karatsuba(mut z, z)
 		fe_sqr_karatsuba(mut z, z)
 		fe_sqr_karatsuba(mut z, z)
 	} else {
@@ -698,14 +710,16 @@ fn (mut z Field) set_bytes(b []u8) ! {
 		return error('set_bytes: expected 56 bytes, got ${b.len}')
 	}
 
-	// Parse little-endian limbs: each limb is 7 bytes (56 bits).
-	for i := 0; i < 8; i++ {
-		mut limb := u64(0)
-		for j := 0; j < 7; j++ {
-			limb |= u64(b[i * 7 + j]) << (j * 8)
-		}
-		z.el[i] = limb
-	}
+	// All byte offsets and shift amounts are compile-time constants.
+	// The compiler can schedule all 56 loads in parallel.
+	z.el[0] = u64(b[0]) | u64(b[1]) << 8 | u64(b[2]) << 16 | u64(b[3]) << 24 | u64(b[4]) << 32 | u64(b[5]) << 40 | u64(b[6]) << 48
+	z.el[1] = u64(b[7]) | u64(b[8]) << 8 | u64(b[9]) << 16 | u64(b[10]) << 24 | u64(b[11]) << 32 | u64(b[12]) << 40 | u64(b[13]) << 48
+	z.el[2] = u64(b[14]) | u64(b[15]) << 8 | u64(b[16]) << 16 | u64(b[17]) << 24 | u64(b[18]) << 32 | u64(b[19]) << 40 | u64(b[20]) << 48
+	z.el[3] = u64(b[21]) | u64(b[22]) << 8 | u64(b[23]) << 16 | u64(b[24]) << 24 | u64(b[25]) << 32 | u64(b[26]) << 40 | u64(b[27]) << 48
+	z.el[4] = u64(b[28]) | u64(b[29]) << 8 | u64(b[30]) << 16 | u64(b[31]) << 24 | u64(b[32]) << 32 | u64(b[33]) << 40 | u64(b[34]) << 48
+	z.el[5] = u64(b[35]) | u64(b[36]) << 8 | u64(b[37]) << 16 | u64(b[38]) << 24 | u64(b[39]) << 32 | u64(b[40]) << 40 | u64(b[41]) << 48
+	z.el[6] = u64(b[42]) | u64(b[43]) << 8 | u64(b[44]) << 16 | u64(b[45]) << 24 | u64(b[46]) << 32 | u64(b[47]) << 40 | u64(b[48]) << 48
+	z.el[7] = u64(b[49]) | u64(b[50]) << 8 | u64(b[51]) << 16 | u64(b[52]) << 24 | u64(b[53]) << 32 | u64(b[54]) << 40 | u64(b[55]) << 48
 
 	// Verify canonicality: x must be in [0, p-1].
 	if !z.is_canonical() {
@@ -724,14 +738,15 @@ fn (mut z Field) set_bytes_loosely(b []u8) ! {
 		return error('set_bytes_loosely: expected 56 bytes, got ${b.len}')
 	}
 
-	// Parse little-endian limbs.
-	for i := 0; i < 8; i++ {
-		mut limb := u64(0)
-		for j := 0; j < 7; j++ {
-			limb |= u64(b[i * 7 + j]) << (j * 8)
-		}
-		z.el[i] = limb
-	}
+	// Parse little-endian limbs, with loop-unrolling
+	z.el[0] = u64(b[0]) | u64(b[1]) << 8 | u64(b[2]) << 16 | u64(b[3]) << 24 | u64(b[4]) << 32 | u64(b[5]) << 40 | u64(b[6]) << 48
+	z.el[1] = u64(b[7]) | u64(b[8]) << 8 | u64(b[9]) << 16 | u64(b[10]) << 24 | u64(b[11]) << 32 | u64(b[12]) << 40 | u64(b[13]) << 48
+	z.el[2] = u64(b[14]) | u64(b[15]) << 8 | u64(b[16]) << 16 | u64(b[17]) << 24 | u64(b[18]) << 32 | u64(b[19]) << 40 | u64(b[20]) << 48
+	z.el[3] = u64(b[21]) | u64(b[22]) << 8 | u64(b[23]) << 16 | u64(b[24]) << 24 | u64(b[25]) << 32 | u64(b[26]) << 40 | u64(b[27]) << 48
+	z.el[4] = u64(b[28]) | u64(b[29]) << 8 | u64(b[30]) << 16 | u64(b[31]) << 24 | u64(b[32]) << 32 | u64(b[33]) << 40 | u64(b[34]) << 48
+	z.el[5] = u64(b[35]) | u64(b[36]) << 8 | u64(b[37]) << 16 | u64(b[38]) << 24 | u64(b[39]) << 32 | u64(b[40]) << 40 | u64(b[41]) << 48
+	z.el[6] = u64(b[42]) | u64(b[43]) << 8 | u64(b[44]) << 16 | u64(b[45]) << 24 | u64(b[46]) << 32 | u64(b[47]) << 40 | u64(b[48]) << 48
+	z.el[7] = u64(b[49]) | u64(b[50]) << 8 | u64(b[51]) << 16 | u64(b[52]) << 24 | u64(b[53]) << 32 | u64(b[54]) << 40 | u64(b[55]) << 48
 
 	// Reduce non-canonical values modulo p.
 	fe_reduce(mut z)
