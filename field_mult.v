@@ -10,7 +10,9 @@ module curve448
 
 import math.unsigned
 
-const karatsuba_bias = unsigned.uint128_new(0, u64(1) << 56)
+// bias_120bits is a constant used to ensure non-negative intermediate values
+// during Karatsuba subtraction steps.
+const bias_120bits = unsigned.uint128_new(0, u64(1) << 56)
 
 // fe_mult_karatsuba multiplies two field elements using 2-way Karatsuba.
 //
@@ -50,23 +52,29 @@ fn fe_mult_karatsuba(mut z Field, x Field, y Field) {
 	x01_2 := x.el[2] + x.el[6]
 	x01_3 := x.el[3] + x.el[7]
 
+	// Then compute y0+y1.
 	y01_0 := y.el[0] + y.el[4]
 	y01_1 := y.el[1] + y.el[5]
 	y01_2 := y.el[2] + y.el[6]
 	y01_3 := y.el[3] + y.el[7]
 
+	// Compute the middle product using the same 4-limb schoolbook multiplication routine.
 	mul_4limb_schoolbook(mut z1, x01_0, x01_1, x01_2, x01_3, y01_0, y01_1, y01_2, y01_3)
 
 	// Apply a bias of 2¹²⁰ to each z1 limb before subtraction to ensure
 	// non-negative intermediate values (since Uint128 has no signed mode).
-	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], karatsuba_bias)
-		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
-	}
+	// Unrolled here to reduce loop overhead in the hot multiplication path.
+	z1[0] = sub_128(sub_128(add_128(z1[0], bias_120bits), z0[0]), z2[0])
+	z1[1] = sub_128(sub_128(add_128(z1[1], bias_120bits), z0[1]), z2[1])
+	z1[2] = sub_128(sub_128(add_128(z1[2], bias_120bits), z0[2]), z2[2])
+	z1[3] = sub_128(sub_128(add_128(z1[3], bias_120bits), z0[3]), z2[3])
+	z1[4] = sub_128(sub_128(add_128(z1[4], bias_120bits), z0[4]), z2[4])
+	z1[5] = sub_128(sub_128(add_128(z1[5], bias_120bits), z0[5]), z2[5])
+	z1[6] = sub_128(sub_128(add_128(z1[6], bias_120bits), z0[6]), z2[6])
 
 	// 4. Reduce modulo p = 2⁴⁴⁸ - 2²²⁴ - 1, folding z0/z1/z2 directly
 	//    without materializing an intermediate r[0..14] array.
-	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, karatsuba_bias)
+	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias_120bits)
 }
 
 // fe_sqr_karatsuba squares a field element using optimized Karatsuba.
@@ -99,17 +107,21 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 	x01_2 := x.el[2] + x.el[6]
 	x01_3 := x.el[3] + x.el[7]
 
+	// Compute the middle square using the same 4-limb schoolbook squaring routine.
 	mul_4limb_schoolbook_square(mut z1, x01_0, x01_1, x01_2, x01_3)
 
 	// Add karatsuba bias to ensure non-negative subtraction.
-	for i := 0; i < 7; i++ {
-		z1_biased := add_128(z1[i], karatsuba_bias)
-		z1[i] = sub_128(sub_128(z1_biased, z0[i]), z2[i])
-	}
+	z1[0] = sub_128(sub_128(add_128(z1[0], bias_120bits), z0[0]), z2[0])
+	z1[1] = sub_128(sub_128(add_128(z1[1], bias_120bits), z0[1]), z2[1])
+	z1[2] = sub_128(sub_128(add_128(z1[2], bias_120bits), z0[2]), z2[2])
+	z1[3] = sub_128(sub_128(add_128(z1[3], bias_120bits), z0[3]), z2[3])
+	z1[4] = sub_128(sub_128(add_128(z1[4], bias_120bits), z0[4]), z2[4])
+	z1[5] = sub_128(sub_128(add_128(z1[5], bias_120bits), z0[5]), z2[5])
+	z1[6] = sub_128(sub_128(add_128(z1[6], bias_120bits), z0[6]), z2[6])
 
 	// 4. Solinas reduction, folding z0/z1/z2 directly without
 	//    materializing an intermediate r[0..14] array.
-	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, karatsuba_bias)
+	fold_and_reduce_karatsuba(mut z, z0, mut z1, z2, bias_120bits)
 }
 
 // Low-Level Limb Multiplication Primitives
@@ -127,19 +139,31 @@ fn fe_sqr_karatsuba(mut z Field, x Field) {
 // fresh `[7]unsigned.Uint128{}` literal, which V zero-initializes.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64) {
-	// Diagonal terms: x_i · x_i, with direct assignment
-	t[0] = mult_64(x0, x0)
-	t[2] = mult_64(x1, x1)
-	t[4] = mult_64(x2, x2)
-	t[6] = mult_64(x3, x3)
+	// Use local accumulators to minimize repeated memory reads/writes.
+	mut t0 := mult_64(x0, x0)
+	mut t1 := unsigned.Uint128{}
+	mut t2 := mult_64(x1, x1)
+	mut t3 := unsigned.Uint128{}
+	mut t4 := mult_64(x2, x2)
+	mut t5 := unsigned.Uint128{}
+	mut t6 := mult_64(x3, x3)
 
 	// Cross terms: 2 · (x_i · x_j) for i < j, computed as left-shift.
-	t[1] = add_128(t[1], lsh_128(mult_64(x0, x1)))
-	t[2] = add_128(t[2], lsh_128(mult_64(x0, x2)))
-	t[3] = add_128(t[3], lsh_128(mult_64(x0, x3)))
-	t[3] = add_128(t[3], lsh_128(mult_64(x1, x2)))
-	t[4] = add_128(t[4], lsh_128(mult_64(x1, x3)))
-	t[5] = add_128(t[5], lsh_128(mult_64(x2, x3)))
+	t1 = lsh_128(mult_64(x0, x1))
+	t2 = add_128(t2, lsh_128(mult_64(x0, x2)))
+	t3 = lsh_128(mult_64(x0, x3))
+	t3 = add_128(t3, lsh_128(mult_64(x1, x2)))
+	t4 = add_128(t4, lsh_128(mult_64(x1, x3)))
+	t5 = lsh_128(mult_64(x2, x3))
+
+	// Store the 7 accumulators back into the output array.
+	t[0] = t0
+	t[1] = t1
+	t[2] = t2
+	t[3] = t3
+	t[4] = t4
+	t[5] = t5
+	t[6] = t6
 }
 
 // mul_4limb_schoolbook performs 4×4 limb schoolbook multiplication into
@@ -152,44 +176,41 @@ fn mul_4limb_schoolbook_square(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64
 // The result is a 448-bit value stored in 7 limbs of 128 bits each.
 @[direct_array_access; inline]
 fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u64, y0 u64, y1 u64, y2 u64, y3 u64) {
-	// No need to clear out a new initialized t.
-	//
-	// Basic 4x4 schoolbook multiply, x * y
-	//
-	//                            x3 x2 x1 x0
-	//                            y3 y2 y1 y0
-	// -------------------------------------- x
-	//                  x3y0  x2y0  x1y0  x0y0
-	//            x3y1  x2y1  x2y1  x0y1
-	//      x3y2  x2y2  x1y2  x0y2
-	// x3y3 x2y3  x1y3  x0y3
-	// ........................................
-	//  t6   t5    t4    t3    t2    t1    t0
-	// ----------------------------------------
-	// Row 0: x0 · [y0, y1, y2, y3]
-	// Direct assignment
-	t[0] = mult_64(x0, y0)
-	t[1] = mult_64(x0, y1)
-	t[2] = mult_64(x0, y2)
-	t[3] = mult_64(x0, y3)
+	// Use local accumulators to minimize repeated memory reads/writes.
+	mut t0 := mult_64(x0, y0)
+	mut t1 := mult_64(x0, y1)
+	mut t2 := mult_64(x0, y2)
+	mut t3 := mult_64(x0, y3)
+	mut t4 := unsigned.Uint128{}
+	mut t5 := unsigned.Uint128{}
+	mut t6 := unsigned.Uint128{}
 
 	// Row 1: x1 · [y0, y1, y2, y3]
-	t[1] = add_128(t[1], mult_64(x1, y0))
-	t[2] = add_128(t[2], mult_64(x1, y1))
-	t[3] = add_128(t[3], mult_64(x1, y2))
-	t[4] = add_128(t[4], mult_64(x1, y3))
+	t1 = add_128(t1, mult_64(x1, y0))
+	t2 = add_128(t2, mult_64(x1, y1))
+	t3 = add_128(t3, mult_64(x1, y2))
+	t4 = mult_64(x1, y3)
 
 	// Row 2: x2 · [y0, y1, y2, y3]
-	t[2] = add_128(t[2], mult_64(x2, y0))
-	t[3] = add_128(t[3], mult_64(x2, y1))
-	t[4] = add_128(t[4], mult_64(x2, y2))
-	t[5] = add_128(t[5], mult_64(x2, y3))
+	t2 = add_128(t2, mult_64(x2, y0))
+	t3 = add_128(t3, mult_64(x2, y1))
+	t4 = add_128(t4, mult_64(x2, y2))
+	t5 = mult_64(x2, y3)
 
 	// Row 3: x3 · [y0, y1, y2, y3]
-	t[3] = add_128(t[3], mult_64(x3, y0))
-	t[4] = add_128(t[4], mult_64(x3, y1))
-	t[5] = add_128(t[5], mult_64(x3, y2))
-	t[6] = add_128(t[6], mult_64(x3, y3))
+	t3 = add_128(t3, mult_64(x3, y0))
+	t4 = add_128(t4, mult_64(x3, y1))
+	t5 = add_128(t5, mult_64(x3, y2))
+	t6 = mult_64(x3, y3)
+
+	// Stores back into the output array.
+	t[0] = t0
+	t[1] = t1
+	t[2] = t2
+	t[3] = t3
+	t[4] = t4
+	t[5] = t5
+	t[6] = t6
 }
 
 // Solinas Reduction: direct fold (no intermediate r[0..14] array)
@@ -276,36 +297,83 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 	//
 	// Step 1: z1 middle term product from fe_mult(square)_karatsuba was added by bias value.
 	//         So, remove subtraction bias from middle product z1.
-	// Remove subtraction bias from middle product z1 (7 explicit lines — no loop).
-	z1[0] = sub_128(z1[0], the_bias)
-	z1[1] = sub_128(z1[1], the_bias)
-	z1[2] = sub_128(z1[2], the_bias)
-	z1[3] = sub_128(z1[3], the_bias)
-	z1[4] = sub_128(z1[4], the_bias)
-	z1[5] = sub_128(z1[5], the_bias)
-	z1[6] = sub_128(z1[6], the_bias)
+	// Keep the corrected z1 limbs in locals to avoid writes back to the array.
+	z10 := sub_128(z1[0], the_bias)
+	z11 := sub_128(z1[1], the_bias)
+	z12 := sub_128(z1[2], the_bias)
+	z13 := sub_128(z1[3], the_bias)
+	z14 := sub_128(z1[4], the_bias)
+	z15 := sub_128(z1[5], the_bias)
+	z16 := sub_128(z1[6], the_bias)
 
-	// Step 2: Compute 2 * z2[4..6] via 1-bit left shift.
-	z2_4x2 := lsh_128(z2[4])
-	z2_5x2 := lsh_128(z2[5])
-	z2_6x2 := lsh_128(z2[6])
+	// Step 2: Cache the limbs used repeatedly below to reduce array indexing.
+	z00 := z0[0]
+	z01 := z0[1]
+	z02 := z0[2]
+	z03 := z0[3]
+	z04 := z0[4]
+	z05 := z0[5]
+	z06 := z0[6]
+	z20 := z2[0]
+	z21 := z2[1]
+	z22 := z2[2]
+	z23 := z2[3]
+	z24 := z2[4]
+	z25 := z2[5]
+	z26 := z2[6]
 
-	// Step 3: Hoist shared subexpressions a0, a1, a2 (used in t0..t2 and t4..t6).
-	a0 := add_128(z1[4], z2[0])
-	a1 := add_128(z1[5], z2[1])
-	a2 := add_128(z1[6], z2[2])
+	// Step 3: Compute 2 * z2[4..6] via 1-bit left shift.
+	z2_4x2 := lsh_128(z24)
+	z2_5x2 := lsh_128(z25)
+	z2_6x2 := lsh_128(z26)
 
-	// Step 4: Accumulate into 8 raw 128-bit accumulators t0..t7.
-	t0 := add_128(z0[0], add_128(a0, z2[4]))
-	t1 := add_128(z0[1], add_128(a1, z2[5]))
-	t2 := add_128(z0[2], add_128(a2, z2[6]))
-	t3 := add_128(z0[3], z2[3])
-	t4 := add_128(z0[4], add_128(z1[0], add_128(a0, z2_4x2)))
-	t5 := add_128(z0[5], add_128(z1[1], add_128(a1, z2_5x2)))
-	t6 := add_128(z0[6], add_128(z1[2], add_128(a2, z2_6x2)))
-	t7 := add_128(z1[3], z2[3])
+	// Step 4: Hoist shared subexpressions a0, a1, a2 (used in t0..t2 and t4..t6).
+	a0 := add_128(z14, z20)
+	a1 := add_128(z15, z21)
+	a2 := add_128(z16, z22)
 
-	// Step 5: reduce the accumulator into 8-limbs by reduce_8limb_product.
+	// Step 5: Accumulate into 8 raw 128-bit accumulators t0..t7.
+	mut t0 := z00
+	t0 = add_128(t0, a0)
+	t0 = add_128(t0, z24)
+
+	// t1 = z01 + a1 + z25
+	mut t1 := z01
+	t1 = add_128(t1, a1)
+	t1 = add_128(t1, z25)
+
+	// t2 = z02 + a2 + z26
+	mut t2 := z02
+	t2 = add_128(t2, a2)
+	t2 = add_128(t2, z26)
+
+	// t3 = z03 + z23
+	mut t3 := z03
+	t3 = add_128(t3, z23)
+
+	// t4 = z04 + z10 + a0 + z2_4x2
+	mut t4 := z04
+	t4 = add_128(t4, z10)
+	t4 = add_128(t4, a0)
+	t4 = add_128(t4, z2_4x2)
+
+	// t5 = z05 + z11 + a1 + z2_5x2
+	mut t5 := z05
+	t5 = add_128(t5, z11)
+	t5 = add_128(t5, a1)
+	t5 = add_128(t5, z2_5x2)
+
+	// t6 = z06 + z12 + a2 + z2_6x2
+	mut t6 := z06
+	t6 = add_128(t6, z12)
+	t6 = add_128(t6, a2)
+	t6 = add_128(t6, z2_6x2)
+
+	// t7 = z13 + z23
+	mut t7 := z13
+	t7 = add_128(t7, z23)
+
+	// Step 6: reduce the accumulator into 8-limbs by reduce_8limb_product.
 	reduce_8limb_product(mut z, t0, t1, t2, t3, t4, t5, t6, t7)
 }
 
@@ -327,31 +395,45 @@ fn reduce_8limb_product(mut z Field, t0 unsigned.Uint128, t1 unsigned.Uint128, t
 	z.el[0] = t0.lo & mask_56bits
 	c = (t0.hi << 8) | (t0.lo >> 56)
 
-	lo1, hi1 := add_u64_to_128(t1, c)
+	// Add carry to the next limb, and propagate again.
+	lo1 := t1.lo + c
+	hi1 := t1.hi + u64(lo1 < c)
 	z.el[1] = lo1 & mask_56bits
 	c = (hi1 << 8) | (lo1 >> 56)
 
-	lo2, hi2 := add_u64_to_128(t2, c)
+	// Repeat for remaining limbs.
+	lo2 := t2.lo + c
+	hi2 := t2.hi + u64(lo2 < c)
 	z.el[2] = lo2 & mask_56bits
 	c = (hi2 << 8) | (lo2 >> 56)
 
-	lo3, hi3 := add_u64_to_128(t3, c)
+	// Repeat for remaining limbs.
+	lo3 := t3.lo + c
+	hi3 := t3.hi + u64(lo3 < c)
 	z.el[3] = lo3 & mask_56bits
 	c = (hi3 << 8) | (lo3 >> 56)
 
-	lo4, hi4 := add_u64_to_128(t4, c)
+	// Repeat for remaining limbs.
+	lo4 := t4.lo + c
+	hi4 := t4.hi + u64(lo4 < c)
 	z.el[4] = lo4 & mask_56bits
 	c = (hi4 << 8) | (lo4 >> 56)
 
-	lo5, hi5 := add_u64_to_128(t5, c)
+	// Repeat for remaining limbs.
+	lo5 := t5.lo + c
+	hi5 := t5.hi + u64(lo5 < c)
 	z.el[5] = lo5 & mask_56bits
 	c = (hi5 << 8) | (lo5 >> 56)
 
-	lo6, hi6 := add_u64_to_128(t6, c)
+	// Repeat for remaining limbs.
+	lo6 := t6.lo + c
+	hi6 := t6.hi + u64(lo6 < c)
 	z.el[6] = lo6 & mask_56bits
 	c = (hi6 << 8) | (lo6 >> 56)
 
-	lo7, hi7 := add_u64_to_128(t7, c)
+	// Repeat for remaining limbs.
+	lo7 := t7.lo + c
+	hi7 := t7.hi + u64(lo7 < c)
 	z.el[7] = lo7 & mask_56bits
 	c = (hi7 << 8) | (lo7 >> 56)
 
