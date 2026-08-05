@@ -25,7 +25,10 @@ fn mask_64bits(cond int) u64 {
 // add_128 adds two 128-bit unsigned integers.
 @[inline]
 fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	return a.add(b)
+	lo := a.lo + b.lo
+	carry := u64(lo < a.lo) // same idiom sub_128 already uses
+	hi := a.hi + b.hi + carry
+	return unsigned.uint128_new(lo, hi)
 }
 
 // lsh_128 left-shifts a 128-bit value by 1 bit.
