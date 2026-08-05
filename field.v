@@ -903,8 +903,8 @@ fn fe_reduce(mut x Field) {
 	c = (x.el[5] + c) >> 56
 	c = (x.el[6] + c) >> 56
 	c = (x.el[7] + c) >> 56
-	// c == 1 iff x >= p.
 
+	// c == 1 iff x >= p.
 	// Step 3: Conditionally add (2²²⁴ + 1) = Solinas constant.
 	x.el[0] += c
 	x.el[4] += c
@@ -912,28 +912,16 @@ fn fe_reduce(mut x Field) {
 	// Step 4: Propagate carries.
 	// carry_out intentionally discarded — see algorithm comment above.
 	mut s := x.el[0]
-	x.el[0] = s & mask_56bits
-	c = s >> 56
-	s = x.el[1] + c
-	x.el[1] = s & mask_56bits
-	c = s >> 56
-	s = x.el[2] + c
-	x.el[2] = s & mask_56bits
-	c = s >> 56
-	s = x.el[3] + c
-	x.el[3] = s & mask_56bits
-	c = s >> 56
-	s = x.el[4] + c
-	x.el[4] = s & mask_56bits
-	c = s >> 56
-	s = x.el[5] + c
-	x.el[5] = s & mask_56bits
-	c = s >> 56
-	s = x.el[6] + c
-	x.el[6] = s & mask_56bits
-	c = s >> 56
-	s = x.el[7] + c
+	// vfmt off
+	x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c
+	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
+	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c
+	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c
+	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c
+	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
+	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
 	x.el[7] = s & mask_56bits
+	// vfmt on
 	// c (== original step-2 carry) is discarded here — deliberate.
 	// The result is in [0, 2²²⁴] ⊂ [0, p) and is already canonical.
 	// No trailing fe_weak_reduce is needed.
@@ -1002,14 +990,14 @@ fn fe_weak_reduce_1pass(mut x Field) {
 	mut c := u64(0)
 	mut s := x.el[0] + c
 	// vfmt off
-  x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c;
-  x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c;
-  x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c;
-  x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c;
-  x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c;
-  x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c;
-  x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c;
-  x.el[7] = s & mask_56bits; c = s >> 56
+  	x.el[0] = s & mask_56bits; c = s >> 56; s = x.el[1] + c;
+  	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c;
+  	x.el[2] = s & mask_56bits; c = s >> 56; s = x.el[3] + c;
+  	x.el[3] = s & mask_56bits; c = s >> 56; s = x.el[4] + c;
+  	x.el[4] = s & mask_56bits; c = s >> 56; s = x.el[5] + c;
+  	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c;
+  	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c;
+  	x.el[7] = s & mask_56bits; c = s >> 56
 	// vfmt on
 
 	// Solinas reduction

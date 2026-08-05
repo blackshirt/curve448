@@ -5,7 +5,6 @@
 // Internal helper functions used across the curve448 module.
 module curve448
 
-import math.bits
 import math.unsigned
 
 // mask_64bits returns an all-ones mask if cond is nonzero, all-zeros if
@@ -22,12 +21,72 @@ fn mask_64bits(cond int) u64 {
 	return u64(0) - normalized
 }
 
+// mult_64 computes the full 128-bit product of two 64-bit values.
+//
+// Returns a Uint128 where: value = a · b
+@[inline]
+fn mult_64(a u64, b u64) unsigned.Uint128 {
+	// Use the built-in 64-bit multiplication to get the full 128-bit result.
+	mut hi := u64(0)
+	lo := C.mul_64_hw(a, b, &hi)
+	return unsigned.uint128_new(lo, hi)
+}
+
+// mult_56 performs a 64×32 → 128-bit multiply and splits the result into
+// 56-bit limbs.
+//
+// Given:
+//   a  — 64-bit multiplicand (up to 64 bits).
+//   b  — 32-bit multiplier    (up to 32 bits).
+//
+// The full 128-bit product P = a * b is decomposed as:
+//
+//     P = hi·2^56 + lo   where   0 ≤ lo < 2^56
+//
+// Returns:
+//   lo — Lower 56 bits of the product (masked).
+//   hi — Upper bits of the product, right-shifted by 56 places.
+//
+// This is useful in multi-limb big-integer arithmetic where each limb
+// carries 56 bits (e.g. base-2^56 representation).
+@[inline]
+fn mult_56(a u64, b u32) (u64, u64) {
+	// Full 64×64 → 128-bit multiply.  Since b ≤ u32, the true product
+	// fits in 96 bits, but we use the 128-bit path for uniformity.
+	// mul_64_hw returns low 64 bits; writes high 64 bits through pointer.
+	mut prod_hi := u64(0)
+	prod_lo := C.mul_64_hw(a, u64(b), &prod_hi)
+
+	// Extract the low 56-bit limb.
+	lo := prod_lo & mask_56bits
+
+	// The remaining bits above bit 55 come from:
+	//   • the upper 8 bits of prod_lo  (prod_lo >> 56)
+	//   • all 64 bits of prod_hi, shifted left by 8 to align with bit 56
+	hi := (prod_hi << 8) | (prod_lo >> limb_bits_size)
+
+	return lo, hi
+}
+
 // add_128 adds two 128-bit unsigned integers.
 @[inline]
 fn add_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	lo := a.lo + b.lo
-	carry := u64(lo < a.lo) // same idiom sub_128 already uses
-	hi := a.hi + b.hi + carry
+	// Use the C implementation of 128-bit addition.
+	mut hi := u64(0)
+	lo := C.add_128_hw(a.lo, a.hi, b.lo, b.hi, &hi)
+	return unsigned.uint128_new(lo, hi)
+}
+
+// sub_128 subtracts b from a, using a manual branch for the borrow
+// (same style as add_u64_to_128) instead of bits.sub_64.
+//
+// PRECONDITION: a >= b. The caller must ensure this; behavior is
+// undefined otherwise (wrap-around in unsigned arithmetic).
+@[inline]
+fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
+	// Use the C implementation of 128-bit subtraction.
+	mut hi := u64(0)
+	lo := C.sub_128_hw(a.lo, a.hi, b.lo, b.hi, &hi)
 	return unsigned.uint128_new(lo, hi)
 }
 
@@ -39,27 +98,6 @@ fn lsh_128(a unsigned.Uint128) unsigned.Uint128 {
 	return unsigned.uint128_new(a.lo << 1, (a.hi << 1) | (a.lo >> 63))
 }
 
-// mult_64 computes the full 128-bit product of two 64-bit values.
-//
-// Returns a Uint128 where: value = a · b
-@[inline]
-fn mult_64(a u64, b u64) unsigned.Uint128 {
-	hi, lo := bits.mul_64(a, b)
-	return unsigned.uint128_new(lo, hi)
-}
-
-// mult_56 multiplies a 56-bit limb by a 32-bit scalar.
-//
-// Returns (lo, hi) such that: lo + hi · 2⁵⁶ = a · b
-// The low 56 bits are masked; the high bits are shifted appropriately.
-@[inline]
-fn mult_56(a u64, b u32) (u64, u64) {
-	hh, ll := bits.mul_64(a, u64(b))
-	lo := ll & mask_56bits
-	hi := (hh << 8) | (ll >> limb_bits_size)
-	return lo, hi
-}
-
 // add_u64_to_128 adds a u64 carry to a 128-bit value.
 //
 // Returns (lo, hi) where the result is hi·2⁶⁴ + lo.
@@ -69,22 +107,6 @@ fn add_u64_to_128(t unsigned.Uint128, c u64) (u64, u64) {
 	// Equivalent to: t.hi + if lo < c { u64(1) } else { u64(0) }
 	hi := t.hi + u64(lo < c) // branchless, compiles to ADC/CMOV
 	return lo, hi
-}
-
-// sub_128 subtracts b from a, using a manual branch for the borrow
-// (same style as add_u64_to_128) instead of bits.sub_64.
-//
-// PRECONDITION: a >= b. The caller must ensure this; behavior is
-// undefined otherwise (wrap-around in unsigned arithmetic).
-@[inline]
-fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
-	lo := a.lo - b.lo
-	// This is intended to use branch for perf reason.
-	// For constant time, use bits trick instead.
-	// borrow := if a.lo < b.lo { u64(1) } else { u64(0) }
-	borrow := u64(a.lo < b.lo) // compiles to SETB or CMOV, zero cycles on modern uarch
-	hi := a.hi - b.hi - borrow
-	return unsigned.uint128_new(lo, hi)
 }
 
 // Helpers for wiping sensitive data securely
