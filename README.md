@@ -29,6 +29,15 @@ v install blackshirt.curve448
 
 Or clone directly and reference the module path in your project.
 
+## Quick Start
+
+Run the test suite and the included benchmark to verify everything works locally:
+
+```bash
+v test .
+v run bench
+```
+
 ---
 
 ## Usage
@@ -179,6 +188,36 @@ Tests include:
 
 ---
 
+## Benchmarks
+
+A small benchmarking program is included under the `bench/` directory. It runs the low-level `x448` scalar-multiplication loop to provide a quick throughput measurement.
+
+Run the benchmark with:
+
+```bash
+v run bench
+```
+
+Example result (this machine): `200 iterations in 2.933s` (~68.2 ops/s).
+
+Run the benchmark to get a quick sense of performance on your machine.
+
+## C interop / helpers
+
+This repository contains a small C-compatible helper (`util.h` / `util.c.v`) used for optional FFI experiments and tooling around the V build. The core library is pure V and does not require any C dependencies; the helper files are optional and not used by the normal `import curve448` workflow.
+
+Also note: module metadata is in `v.mod` for direct `v` tool usage.
+
 ## License
 
 MIT. See [LICENSE](LICENSE) for details.
+
+## Supported V versions
+
+This library is known to build with recent V toolchains (0.4+). If you encounter compatibility issues, please open an issue with your `v version` output.
+
+## Contributing
+
+Contributions are welcome. Please open issues or pull requests on GitHub. Run the test suite (`v test .`) and add tests for any new behavior. Maintain a short, focused commit and reference related issues in your PR.
+
+Maintainer: blackshirt
