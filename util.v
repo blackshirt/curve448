@@ -115,7 +115,7 @@ fn sub_128(a unsigned.Uint128, b unsigned.Uint128) unsigned.Uint128 {
 	}
 	// Fallback to manual subtraction with borrow.
 	lo := a.lo - b.lo
-	borrow := u64(lo > a.lo) // same idiom add_u64_to_128 already uses
+	borrow := u64(a.lo < b.lo) // same idiom add_u64_to_128 already uses
 	hi := a.hi - b.hi - borrow
 	return unsigned.uint128_new(lo, hi)
 }
