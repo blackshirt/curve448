@@ -10,6 +10,16 @@
 // of 56 bits each, stored in little-endian order. This representation
 // allows lazy carry handling and defers full reduction until needed.
 //
+// Solinas Reduction
+//
+// For Curve448, the prime p = 2⁴⁴⁸ - 2²²⁴ - 1 admits a fast reduction rule:
+//
+//   2⁴⁴⁸ ≡ 2²²⁴ + 1  (mod p)
+//
+// This means any overflow at the top limb (limb 7) can be folded back by
+// adding its carry to limbs 0 and 4. In effect, it replaces an expensive
+// full modular reduction with cheap additions to two limbs.
+//
 // SECURITY NOTE: All comparison, selection, and swap operations are
 // implemented to run in constant-time to mitigate timing side-channels.
 // However, full constant-time guarantees also depend on the compiler not
@@ -169,13 +179,20 @@ fn fe_add(mut z Field, a Field, b Field) {
 
 // fe_sub computes modular field subtraction: z = a - b (mod p).
 //
-// Algorithm:
-//   1. Add 4×p to a to guarantee no underflow during subtraction.
-//   2. Subtract b limb-wise.
-//   3. Extract carries and propagate them.
-//   4. Apply final weak reduction.
+// The key challenge: direct subtraction risks underflow since b might be
+// "redundant" (limbs up to 2⁵⁷). Solution: use 4×p as an offset.
 //
-// The 4×p offset ensures all intermediate limb values remain non-negative.
+// Why 4×p (not 2×p)?
+// - Each limb b[i] can reach ~2⁵⁷ before reduction.
+// - Using 2×p leaves only a 1–3 unit safety margin.
+// - 4×p provides comfortable headroom and is still fast to precompute.
+//
+// Algorithm:
+//   1. Compute (a + 4p) - b per limb. The 4p offset prevents underflow.
+//   2. Extract 56-bit portion and carry for each result.
+//   3. Propagate carries left-to-right (limbs 0..6 to their next).
+//   4. Fold the top carry (c7) back via Solinas: c7 → limbs 0 and 4.
+//   5. Apply single-pass weak reduction (all limbs back to <2⁵⁶).
 @[direct_array_access; inline]
 fn fe_sub(mut z Field, a Field, b Field) {
 	// Step 1: Compute (a + 4p) - b per limb, extracting 56-bit carries.
@@ -302,16 +319,15 @@ fn fe_equal(a Field, b Field) bool {
 	return fe_cmp(a, b) == 1
 }
 
-// fe_cmp compares two field elements modulo p in constant-time.
+// fe_cmp compares two field elements in constant-time.
 //
-// Returns:
-//   1  if a == b (mod p)
-//   0  otherwise
+// Returns: 1 if a ≡ b (mod p), 0 otherwise.
 //
-// Algorithm:
-//   1. Reduce both a and b to canonical form.
-//   2. XOR corresponding limbs; any difference sets bits in accumulator c.
-//   3. Return 1 if c == 0, else 0, computed branchlessly.
+// Constant-time design (no branches on secret data):
+//   - Both inputs reduced to canonical form [0, p-1].
+//   - Compare all 8 limbs via XOR (bitwise, not conditional).
+//   - Any differing bit sets accumulator → result is 0.
+//   - No early exit if a mismatch is found.
 @[direct_array_access; inline]
 fn fe_cmp(a Field, b Field) int {
 	// Step 1: Reduce both inputs to canonical representation in [0, p-1].
@@ -749,31 +765,14 @@ fn (mut z Field) set_bytes_loosely(b []u8) ! {
 	fe_reduce(mut z)
 }
 
-// fe_is_canonical returns 1 if z is in canonical form [0, p-1], 0 otherwise.
+// fe_is_canonical returns 1 if z is in [0, p-1], and 0 otherwise.
 //
-// A field element is canonical if and only if two conditions both hold:
-//   (a) every limb fits in 56 bits (no residual carries), AND
-//   (b) the integer value is strictly less than p = 2⁴⁴⁸ - 2²²⁴ - 1.
+// Adding 2²²⁴ + 1 and checking the final carry tests both canonicality
+// requirements: every limb fits in 56 bits and the represented integer is
+// less than p. The carry chain is branchless and has no early exit.
 //
-// Algorithm — single branchless pass:
-//
-//   We test z < p by checking whether z + (2²²⁴ + 1) overflows 448 bits,
-//   i.e. whether the carry out of the top limb is 1 after adding the
-//   Solinas constant.  In limb form, 2²²⁴ + 1 = [1, 0, 0, 0, 1, 0, 0, 0].
-//
-//   Simultaneously, any limb that already exceeds 56 bits causes the sum
-//   for that limb to carry into the next one, eventually propagating a
-//   spurious carry out of the top — so the single overflow test catches
-//   both (a) and (b) in one chain.
-//
-//   Every intermediate value is a u64 arithmetic expression.  There are no
-//   branches, no loops, and no data-dependent memory accesses.  The
-//   compiled output should be a straight-line sequence of ADD/ADC
-//   (or equivalent) instructions.
-//
-// Matches the carry-test logic inside fe_reduce (the same idiom, audited
-// by that function).  Return type is int (0/1) for consistency with
-// fe_cmp, fe_is_zero, and mask_64bits.
+// This is the same carry test used by fe_reduce. The int result is kept
+// consistent with fe_cmp, fe_is_zero, and mask_64bits.
 @[direct_array_access; inline]
 fn fe_is_canonical(z Field) int {
 	// Add 2²²⁴ + 1 = [1, 0, 0, 0, 1, 0, 0, 0] to z, propagating carries.
@@ -924,24 +923,19 @@ fn fe_reduce(mut x Field) {
 	// No trailing fe_weak_reduce is needed.
 }
 
-// fe_weak_reduce performs carry propagation across all limbs.
+// fe_weak_reduce normalizes limbs to [0, 2⁵⁶) without necessarily producing
+// the canonical representative modulo p.
 //
-// Algorithm:
-//   1. Two full passes extract 56-bit limbs and propagate carries.
-//   2. The carry out of limb 7 is folded back into limbs 0 and 4
-//      (Solinas: 2⁴⁴⁸ = 2²²⁴ + 1).
-//   3. A final ripple handles any overflow in limbs 0 or 4 caused by
-//      the fold-back.
-//
-// Two passes are mathematically sufficient to absorb all Solinas carries.
+// Each of two carry-propagation passes folds the carry from limb 7 into limbs
+// 0 and 4 using 2⁴⁴⁸ ≡ 2²²⁴ + 1 (mod p). A final ripple absorbs any overflow
+// introduced by the second fold. Two passes suffice for the bounds produced
+// by the field arithmetic routines.
 @[direct_array_access; inline]
 fn fe_weak_reduce(mut x Field) {
 	mut c := u64(0)
-	// We do fully 2-loop unroll into straight-line code. Unrolling removes 16 loop iterations
-	// and 2 fold-back branches per call. This eliminates loop overhead
-	// and gives the register allocator full visibility.
-	//
-	// Pass 1, extract 56-bit limbs and propagate carries.
+	// The passes are fully unrolled so carry propagation stays straight-line
+	// code in this hot primitive.
+	// Pass 1: extract 56-bit limbs and propagate carries.
 	// vfmt off
 	mut s := x.el[0] + c;
 	x.el[0] = s & mask_56bits; c = s >> 56;	s = x.el[1] + c
@@ -952,11 +946,11 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
 	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
 	x.el[7] = s & mask_56bits; c = s >> 56
-	// 1-st Solinas reduction
+	// Fold overflow at 2⁴⁴⁸ back into limbs 0 and 4.
 	x.el[0] += c
 	x.el[4] += c
 
-	// Pass 2, extract 56-bit limbs and propagate carries once again
+	// Pass 2: absorb carries introduced by the first fold.
 	c = x.el[0] >> 56;
 	x.el[0] &= mask_56bits; s = x.el[1] + c
 	x.el[1] = s & mask_56bits; c = s >> 56; s = x.el[2] + c
@@ -966,7 +960,7 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[5] = s & mask_56bits; c = s >> 56; s = x.el[6] + c
 	x.el[6] = s & mask_56bits; c = s >> 56; s = x.el[7] + c
 	x.el[7] = s & mask_56bits; c = s >> 56
-	// 2-nd Solinas reduction
+	// Fold any second-pass overflow as well.
 	x.el[0] += c
 	x.el[4] += c
 	// vfmt on
