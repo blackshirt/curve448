@@ -2,11 +2,12 @@
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 //
+// Unit tests and RFC 7748 test vector verifications for Curve448 / X448 scalar multiplication.
 module curve448
 
 import encoding.hex
 
-// The first two test is a pair of test vectors that consist of expected outputs for the given inputs.
+// test_x448_rfc7748_1 verifies X448 scalar multiplication against RFC 7748 §6.2 test vector 1.
 fn test_x448_rfc7748_1() ! {
 	k :=
 		hex.decode('3d262fddf9ec8e88495266fea19a34d28882acef045104d0d1aae121700a779c984c24f8cdd78fbff44943eba368f54b29259a4f1c600ad3')!
@@ -20,6 +21,7 @@ fn test_x448_rfc7748_1() ! {
 	assert out == expected
 }
 
+// test_x448_rfc7748_2 verifies X448 scalar multiplication against RFC 7748 §6.2 test vector 2.
 fn test_x448_rfc7748_2() ! {
 	k :=
 		hex.decode('203d494428b8399352665ddca42f9de8fef600908e0d461cb021f8c538345dd77c3e4806e25f46d3315c44e0a5b4371282dd2c8d5be3095f')!
@@ -33,19 +35,9 @@ fn test_x448_rfc7748_2() ! {
 	assert out == expected
 }
 
-// The second type of test vector consists of the result of calling the
-// function in question a specified number of times.
+// test_x448_rfc7748_3 verifies iterative X448 scalar multiplication against RFC 7748 §6.2.
 //
-// RFC 7748 §6.2 specifies three checkpoints:
-//   - after      1 iteration
-//   - after  1,000 iterations
-//   - after 1,000,000 iterations
-//
-// The original implementation only looped to 1,000 so the million-
-// iteration vector (ref1m) was declared but never reached (gap E).
-// The loop is now extended to 1,000,000 and all three checkpoints are
-// verified.  The million-iteration run is slow (~30 s in debug mode);
-// use `v -prod test .` to run it at full speed.
+// Checks intermediate outputs at 1 iteration and 1,000 iterations.
 fn test_x448_rfc7748_3() ! {
 	mut k := []u8{len: 56}
 	k[0] = 5
@@ -61,7 +53,7 @@ fn test_x448_rfc7748_3() ! {
 		hex.decode('077f453681caca3693198420bbe515cae0002472519b3e67661a7e89cab94695c8f4bcd66e61b9b9c946da8d524de3d69bd9d9d66b997e37')!
 
 	// For each iteration, set k to be the result of calling the function
-	// and u to be the old value of k.  The final result is the value left in k.
+	// and u to be the old value of k. The final result is the value left in k.
 	mut r := []u8{len: 56}
 	for i in 0 .. 1000 {
 		r = x448(k, u)!
@@ -74,56 +66,38 @@ fn test_x448_rfc7748_3() ! {
 		} else if i == 999 {
 			assert k == ref1000, 'RFC 7748 vector mismatch after 1,000 iterations'
 		}
-		// else if i == 999_999 {
-		// assert k == ref1m, 'RFC 7748 vector mismatch after 1,000,000 iterations'
-		//}
 	}
 }
 
+// test_rfc7448_4 verifies complete Alice and Bob Diffie-Hellman exchange per RFC 7748 §6.1.
 fn test_rfc7448_4() ! {
-	/*
-     Alice's private key, a:
-      9a8f4925d1519f5775cf46b04b5800d4ee9ee8bae8bc5565d498c28d
-      d9c9baf574a9419744897391006382a6f127ab1d9ac2d8c0a598726b
-    Alice's public key, X448(a, 5):
-      9b08f7cc31b7e3e67d22d5aea121074a273bd2b83de09c63faa73d2c
-      22c5d9bbc836647241d953d40c5b12da88120d53177f80e532c41fa0
-    Bob's private key, b:
-      1c306a7ac2a0e2e0990b294470cba339e6453772b075811d8fad0d1d
-      6927c120bb5ee8972b0d3e21374c9c921b09d1b0366f10b65173992d
-    Bob's public key, X448(b, 5):
-      3eb7a829b0cd20f5bcfc0b599b6feccf6da4627107bdb0d4f345b430
-      27d8b972fc3e34fb4232a13ca706dcb57aec3dae07bdc1c67bf33609
-    Their shared secret, K:
-      07fff4181ac6cc95ec1c16a94a0f74d12da232ce40a77552281d282b
-      b60c0b56fd2464c335543936521c24403085d59a449a5037514a879d
-	*/
-	// Alice key
+	// Alice private key
 	a :=
 		hex.decode('9a8f4925d1519f5775cf46b04b5800d4ee9ee8bae8bc5565d498c28dd9c9baf574a9419744897391006382a6f127ab1d9ac2d8c0a598726b')!
-	// Alice public key
+	// Alice public key expected
 	exp_alice_pbk :=
 		hex.decode('9b08f7cc31b7e3e67d22d5aea121074a273bd2b83de09c63faa73d2c22c5d9bbc836647241d953d40c5b12da88120d53177f80e532c41fa0')!
-	// calculates alice pubkey
+	// Calculates Alice pubkey
 	alice_pbk := x448(a, base_point)!
 	assert alice_pbk == exp_alice_pbk
 
-	// Bob's private key, b:
+	// Bob's private key
 	b :=
 		hex.decode('1c306a7ac2a0e2e0990b294470cba339e6453772b075811d8fad0d1d6927c120bb5ee8972b0d3e21374c9c921b09d1b0366f10b65173992d')!
-	// Bob's public key, X448(b, 5):
+	// Bob's public key expected
 	exp_bob_pbk :=
 		hex.decode('3eb7a829b0cd20f5bcfc0b599b6feccf6da4627107bdb0d4f345b43027d8b972fc3e34fb4232a13ca706dcb57aec3dae07bdc1c67bf33609')!
-	// Calculated Bob's public key
+	// Calculates Bob's public key
 	bob_pbk := x448(b, base_point)!
 	assert bob_pbk == exp_bob_pbk
 
-	// Alice calc shared secret
+	// Alice and Bob calculate shared secret
 	alice_shared := x448(a, exp_bob_pbk)!
 	bob_shared := x448(b, exp_alice_pbk)!
 	assert alice_shared == bob_shared
 }
 
+// test_validate_point verifies validation rules for X448 public points (lengths, low-order, non-canonical).
 fn test_validate_point() ! {
 	// 1. Valid base point
 	validate_point(base_point)!
@@ -131,7 +105,7 @@ fn test_validate_point() ! {
 	// 2. Bad point length
 	validate_point([]u8{len: 55}) or { assert err == error('x448: bad point length') }
 
-	// 3. Low-order points (u = 0, u = 1)
+	// 3. Low-order points (u = 0, u = 1, u = p - 1)
 	zero_point := []u8{len: 56}
 	validate_point(zero_point) or { assert err == error('x448: low order point') }
 

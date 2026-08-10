@@ -250,7 +250,7 @@ fn mul_4limb_schoolbook(mut t [7]unsigned.Uint128, x0 u64, x1 u64, x2 u64, x3 u6
 // ~400 times per fe_power446 call).
 @[direct_array_access; inline]
 fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsigned.Uint128, z2 [7]unsigned.Uint128, the_bias unsigned.Uint128) {
-	// Looks on previous product of fe_mult_karatsuba, on unreduced form
+	// Layout of unreduced partial products from fe_mult_karatsuba / fe_sqr_karatsuba:
 	// z0[0..6] = x0 · y0 => offsets B⁰ through B⁶
 	// z2[0..6]	= x1 · y1	=> offsets B⁸ through B¹⁴
 	// z1[0..6] = (x0+x1)(y0+y1) − z0 − z2 => offsets B⁴ through B¹⁰
@@ -261,7 +261,7 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 	// middle z1:                           z1[0] z1[1] z1[2] z1[3] | z1[4] z1[5] z1[6]       |
 	// high z2:                                                     | z2[0] z2[1] z2[2] z2[3] | z2[4] z2[5] z2[6]
 	//
-	// Using solinas identity,
+	// Using Solinas identity,
 	// p = B⁸ − B⁴ − 1 or  B⁸ = B⁴ + 1 (mod p)
 	//
 	// From this, higher powers fold down:
@@ -273,7 +273,7 @@ fn fold_and_reduce_karatsuba(mut z Field, z0 [7]unsigned.Uint128, mut z1 [7]unsi
 	// | B¹¹    | B⁷ + B³     |
 	// | B¹²    | 2·B⁴ + 1    |
 	// | B¹³    | 2·B⁵ + B    |
-	// | B¹⁴    | 2·B⁶ + B`   |
+	// | B¹⁴    | 2·B⁶ + B²   |
 	// ------------------------
 	// On folded 8-limbs, with solinas identity
 	//      t0      t1    t2    t3    t4    t5    t6    t7

@@ -1,3 +1,4 @@
+// Benchmark for X448 scalar multiplication in pure V.
 module main
 
 import curve448
@@ -11,6 +12,7 @@ const scalar = [u8(0x09), 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 
 const point = [u8(5), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]!
 
+// bench_x448 measures execution time of a single X448 scalar multiplication.
 fn bench_x448() ! {
 	_ := curve448.x448(scalar, point) or { panic(err) }
 }

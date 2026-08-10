@@ -37,23 +37,36 @@ import crypto.rand
 // (clearing the two low bits of the first byte and setting the high bit of
 // the last byte) is applied internally by `x448()` on every use, matching
 // the behavior of the free function.
+//
+// The struct is marked `@[noinit]` to prevent zero-initialized default construction.
 @[noinit]
 pub struct PrivateKey {
 mut:
+	// bytes holds the 56-byte unclamped raw scalar.
 	bytes [56]u8
 }
 
-// PublicKey represents an X448 public point's u-coordinate (56 bytes).
+// PublicKey represents an X448 public point's u-coordinate (56 bytes / 448 bits).
+//
+// The stored bytes represent the little-endian u-coordinate of the public point.
+// The struct is marked `@[noinit]` to prevent zero-initialized default construction.
 @[noinit]
 pub struct PublicKey {
 mut:
+	// bytes holds the 56-byte little-endian u-coordinate.
 	bytes [56]u8
 }
 
 // new_private_key wraps a 56-byte secret scalar into a `PrivateKey`.
 //
-// This performs no validation beyond length: any 56-byte value is a
-// structurally valid X448 scalar input (clamping is applied at use time).
+// Parameters:
+//   b - Byte slice of length 56 containing the raw unclamped scalar.
+//
+// Errors:
+//   - Returns an error if `b.len != 56`.
+//
+// Note: This performs no validation beyond length checks: any 56-byte value is a
+// structurally valid X448 scalar input (clamping is applied at use time inside `x448()`).
 @[direct_array_access]
 pub fn new_private_key(b []u8) !PrivateKey {
 	if b.len != scalar_size {
@@ -68,10 +81,15 @@ pub fn new_private_key(b []u8) !PrivateKey {
 
 // new_public_key wraps a 56-byte peer point into a `PublicKey`.
 //
-// This performs no validation: non-canonical or low-order points are
-// accepted here (per RFC 7748, `x448()` reduces non-canonical points mod p
-// automatically). Call `.validate()` explicitly if strict RFC 7748 point
-// validation is required before use.
+// Parameters:
+//   b - Byte slice of length 56 containing the public point u-coordinate.
+//
+// Errors:
+//   - Returns an error if `b.len != 56`.
+//
+// Note: Non-canonical or low-order points are accepted here (per RFC 7748, `x448()` reduces
+// non-canonical points mod p automatically). Call `pub_key.validate()` explicitly if strict RFC 7748
+// point validation is required before use.
 @[direct_array_access]
 pub fn new_public_key(b []u8) !PublicKey {
 	if b.len != scalar_size {
@@ -84,7 +102,10 @@ pub fn new_public_key(b []u8) !PublicKey {
 	return pub_key
 }
 
-// generate_private_key creates a new `PrivateKey` from a CSPRNG.
+// generate_private_key creates a new `PrivateKey` populated with 56 bytes from a CSPRNG.
+//
+// Returns:
+//   A new `PrivateKey` populated with random scalar bytes.
 //
 // The returned scalar is unclamped raw random bytes; clamping happens at
 // use time inside `x448()`, consistent with every other entry point here.
@@ -95,24 +116,27 @@ pub fn generate_private_key() !PrivateKey {
 
 // bytes returns a copy of the private key's raw scalar bytes.
 //
-// The returned slice is a fresh copy; the caller is responsible for
-// wiping it (e.g. via the module's `secure_zero_buf`-style handling) once
-// it is no longer needed, since ordinary V garbage collection does not
-// zero freed memory.
+// Returns:
+//   A fresh 56-byte slice copy of the private scalar.
+//
+// Security note: The returned slice is a fresh heap allocation; the caller is responsible for
+// zeroing it (e.g. via `secure_zero_buf`) once no longer needed, as ordinary GC does not zero memory.
 pub fn (p PrivateKey) bytes() []u8 {
 	return p.bytes[..].clone()
 }
 
-// bytes returns a copy of the public key's raw point bytes.
+// bytes returns a copy of the public key's raw u-coordinate bytes.
+//
+// Returns:
+//   A fresh 56-byte slice copy of the public key point.
 pub fn (p PublicKey) bytes() []u8 {
 	return p.bytes[..].clone()
 }
 
-// zero wipes this private key's scalar bytes in place.
+// zero wipes this private key's scalar bytes in place using volatile memory writes.
 //
-// Call this once the key is no longer needed. After calling `zero`, the
-// key must not be used again (its bytes become all-zero, which decodes to
-// a valid-looking but cryptographically meaningless scalar).
+// Call this once the key is no longer needed. After calling `zero()`, the
+// key must not be used again (its backing bytes become all-zero).
 pub fn (mut p PrivateKey) zero() {
 	// NOTE: `p.bytes[..]` followed by `secure_zero_buf` would copy the
 	// fixed array into a fresh dynamic-array header rather than aliasing
@@ -129,8 +153,11 @@ pub fn (p PublicKey) validate() ! {
 	validate_point(p.bytes[..])!
 }
 
-// public_key derives the public key corresponding to this private key,
-// i.e. the result of scalar-multiplying the standard base point (u = 5).
+// public_key derives the `PublicKey` corresponding to this `PrivateKey`,
+// i.e. the result of scalar-multiplying the standard Curve448 base point (u = 5).
+//
+// Returns:
+//   Derived `PublicKey` containing the 56-byte u-coordinate point.
 pub fn (priv PrivateKey) public_key() !PublicKey {
 	out := x448(priv.bytes[..], base_point)!
 	return new_public_key(out)
@@ -139,13 +166,19 @@ pub fn (priv PrivateKey) public_key() !PublicKey {
 // shared_secret computes the X448 Diffie-Hellman shared secret between
 // this private key and a peer's public key.
 //
+// Parameters:
+//   peer - The peer's `PublicKey`.
+//
+// Returns:
+//   56-byte slice containing the computed ECDH shared secret.
+//
+// Errors:
+//   - Returns an error if scalar multiplication yields a low-order point (all-zero output).
+//
 // This is the recommended entry point for ECDH: unlike the free `x448()`
 // function, the two arguments have distinct types, so a call site that
 // accidentally swaps the private and public key arguments fails to
 // compile instead of silently producing a bogus shared secret.
-//
-// Returns an error if the resulting point is a low-order point (see
-// `x448()` for details).
 pub fn (priv PrivateKey) shared_secret(peer PublicKey) ![]u8 {
 	return x448(priv.bytes[..], peer.bytes[..])
 }

@@ -150,7 +150,9 @@ fn fe_clone(mut z Field, x Field) {
 // weak reduction normalizes the result.
 @[direct_array_access; inline]
 fn fe_add(mut z Field, a Field, b Field) {
-	// Step 1: Limb-wise addition (may overflow 56 bits).
+	// Step 1: Perform unreduced limb-wise addition.
+	// Each limb sum can temporarily reach up to (2⁵⁶ - 1) + (2⁵⁶ - 1) = 2⁵⁷ - 2 (< 2⁶⁴),
+	// fitting comfortably inside a u64 without integer overflow.
 	z.el[0] = a.el[0] + b.el[0]
 	z.el[1] = a.el[1] + b.el[1]
 	z.el[2] = a.el[2] + b.el[2]
@@ -160,7 +162,8 @@ fn fe_add(mut z Field, a Field, b Field) {
 	z.el[6] = a.el[6] + b.el[6]
 	z.el[7] = a.el[7] + b.el[7]
 
-	// Step 2: Propagate carries and apply Solinas reduction.
+	// Step 2: Propagate carries and apply Solinas reduction (2⁴⁴⁸ ≡ 2²²⁴ + 1 mod p)
+	// to bring all limbs back into normalized bound [0, 2⁵⁶).
 	fe_weak_reduce(mut z)
 }
 
@@ -175,7 +178,9 @@ fn fe_add(mut z Field, a Field, b Field) {
 // The 4×p offset ensures all intermediate limb values remain non-negative.
 @[direct_array_access; inline]
 fn fe_sub(mut z Field, a Field, b Field) {
-	// Step 1: Compute (a + 4p) - b per limb, extracting carries.
+	// Step 1: Compute (a + 4p) - b per limb, extracting 56-bit carries.
+	// Adding fe_4p_limbs guarantees that (a.el[i] + fe_4p_limbs[i]) >= b.el[i]
+	// even if b is at its maximum redundant bound (< 2⁵⁷), preventing u64 underflow.
 	z0 := (a.el[0] + fe_4p_limbs[0]) - b.el[0]
 	c0 := z0 >> limb_bits_size
 	z.el[0] = z0 & mask_56bits
@@ -208,11 +213,13 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	c7 := z7 >> limb_bits_size
 	z.el[7] = z7 & mask_56bits
 
-	// Step 2: Propagate carries. The carry out of limb 7 is folded
-	// back into limbs 0 and 4 per the Solinas identity 2⁴⁴⁸ = 2²²⁴ + 1.
+	// Step 2: Propagate carries. The top carry c7 out of limb 7 represents
+	// overflow at 2⁴⁴⁸, which folds back into limbs 0 and 4 per Solinas identity:
+	// 2⁴⁴⁸ ≡ 2²²⁴ + 1 (mod p).
 	z.el[0] += c7
 	z.el[4] += c7
 
+	// Ripple lower carries c0..c6 forward into adjacent higher limbs.
 	z.el[1] += c0
 	z.el[2] += c1
 	z.el[3] += c2
@@ -221,8 +228,7 @@ fn fe_sub(mut z Field, a Field, b Field) {
 	z.el[6] += c5
 	z.el[7] += c6
 
-	// Step 3: Normalize any new overflows from carry propagation.
-	// fe_weak_reduce(mut z)
+	// Step 3: Single-pass weak reduction to absorb ripple overflows into [0, 2⁵⁶).
 	fe_weak_reduce_1pass(mut z)
 }
 
@@ -235,7 +241,7 @@ fn fe_sub(mut z Field, a Field, b Field) {
 // Using 4×p instead of 2×p provides the same safety margin as fe_sub.
 @[direct_array_access; inline]
 fn fe_negate(mut z Field, a Field) {
-	// Step 1: Compute 4p - a per limb, extract the carry
+	// Step 1: Compute (4p - a) per limb, extracting 56-bit carries.
 	z0 := fe_4p_limbs[0] - a.el[0]
 	c0 := z0 >> limb_bits_size
 	z.el[0] = z0 & mask_56bits
@@ -268,7 +274,7 @@ fn fe_negate(mut z Field, a Field) {
 	c7 := z7 >> limb_bits_size
 	z.el[7] = z7 & mask_56bits
 
-	// Step 2: Propagate carries with Solinas fold-back.
+	// Step 2: Propagate carries with Solinas fold-back (c7 into limbs 0 and 4).
 	z.el[0] += c7
 	z.el[4] += c7
 
@@ -280,8 +286,7 @@ fn fe_negate(mut z Field, a Field) {
 	z.el[6] += c5
 	z.el[7] += c6
 
-	// Step 3: Normalize.
-	// use fe_weak_reduce_1pass instead of fe_weak_reduce
+	// Step 3: Single-pass weak reduction.
 	fe_weak_reduce_1pass(mut z)
 }
 
@@ -309,14 +314,14 @@ fn fe_equal(a Field, b Field) bool {
 //   3. Return 1 if c == 0, else 0, computed branchlessly.
 @[direct_array_access; inline]
 fn fe_cmp(a Field, b Field) int {
-	// Step 1: Reduce to canonical representation
+	// Step 1: Reduce both inputs to canonical representation in [0, p-1].
 	mut x := a
 	mut y := b
 	fe_reduce(mut x)
 	fe_reduce(mut y)
 
-	// Step 2: Constant-time limb comparison via XOR accumulation.
-	// Any differing bit in any limb will set a bit in c.
+	// Step 2: Constant-time limb comparison via bitwise XOR accumulation.
+	// Any differing bit in any limb will set one or more bits in accumulator c.
 	mut c := u64(0)
 	c |= x.el[0] ^ y.el[0]
 	c |= x.el[1] ^ y.el[1]
@@ -327,8 +332,8 @@ fn fe_cmp(a Field, b Field) int {
 	c |= x.el[6] ^ y.el[6]
 	c |= x.el[7] ^ y.el[7]
 
-	// Step 3: Branchless result: 1 if c == 0, else 0.
-	// Trick: (c | -c) has MSB set iff c != 0.
+	// Step 3: Branchless normalization: returns 1 if c == 0 (equal), else 0.
+	// Bitwise trick: (c | -c) has bit 63 set iff c != 0. Shifting right by 63 yields 1 for c != 0, 0 for c == 0.
 	return int(1 - ((c | (0 - c)) >> 63))
 }
 
@@ -337,6 +342,7 @@ fn fe_cmp(a Field, b Field) int {
 // No reduction is performed. Use only when both inputs are known canonical.
 @[direct_array_access; inline]
 fn fe_cmp_canonical(a Field, b Field) int {
+	// Accumulate limb differences via XOR without reducing first.
 	mut c := u64(0)
 	c |= a.el[0] ^ b.el[0]
 	c |= a.el[1] ^ b.el[1]
@@ -357,7 +363,9 @@ fn fe_cmp_canonical(a Field, b Field) int {
 // Uses a bitmask derived from c to blend limbs branchlessly.
 @[direct_array_access; inline]
 fn fe_cselect(mut z Field, a Field, b Field, c int) {
+	// m = 0xFFFF_FFFF_FFFF_FFFF if c != 0, else 0x0000_0000_0000_0000.
 	m := mask_64bits(c)
+	// Blend each limb branchlessly: (a & m) selects a when m is all-ones, (b & ~m) selects b when m is all-zeros.
 	z.el[0] = (a.el[0] & m) | (b.el[0] & ~m)
 	z.el[1] = (a.el[1] & m) | (b.el[1] & ~m)
 	z.el[2] = (a.el[2] & m) | (b.el[2] & ~m)
@@ -374,9 +382,13 @@ fn fe_cselect(mut z Field, a Field, b Field, c int) {
 // Uses XOR-swap with a bitmask to avoid branches.
 @[direct_array_access; inline]
 fn fe_cswap(mut a Field, mut b Field, c int) {
+	// Derive all-ones bitmask for true, all-zeros for false.
 	m := mask_64bits(c)
 
-	// XOR-swap each limb branchlessly.
+	// Constant-time XOR-swap for each limb:
+	//   d = m & (a ^ b)  -> d = a ^ b if c != 0, else 0
+	//   a = a ^ d        -> a = b if c != 0, else a
+	//   b = b ^ d        -> b = a if c != 0, else b
 	d0 := m & (a.el[0] ^ b.el[0])
 	a.el[0] ^= d0
 	b.el[0] ^= d0
@@ -412,9 +424,10 @@ fn fe_cswap(mut a Field, mut b Field, c int) {
 
 // Modular Inverse and Exponentiation
 //
+
 // fe_inverse computes the modular multiplicative inverse: z = x⁻¹ (mod p).
 //
-// Algorithm: Fermat's little theorem.
+// Algorithm: Fermat's Little Theorem.
 //   x⁻¹ ≡ x^(p-2)  (mod p)
 //
 // Since p = 2⁴⁴⁸ - 2²²⁴ - 1, we have:
@@ -427,7 +440,6 @@ fn fe_cswap(mut a Field, mut b Field, c int) {
 //   z = t · x                                     [2⁴⁴⁸ - 2²²⁴ - 3]
 @[direct_array_access; inline]
 fn fe_inverse(mut z Field, x Field) {
-	// removes temporary mut t := Field{}
 	fe_power446(mut z, x)
 	fe_sqr_n(mut z, z, 2) // t = x^(2⁴⁴⁸ - 2²²⁴ - 4)
 	fe_mult(mut z, z, x) // z = x^(2⁴⁴⁸ - 2²²⁴ - 3) = x⁻¹
@@ -467,25 +479,21 @@ fn fe_power446(mut v Field, z Field) {
 
 	// t6 = z^(2⁶ - 1)
 	mut t6 := Field{}
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t6, t3, 3) // t6 = z^(7·2³) = z^(2⁶-2³)
 	fe_mult(mut t6, t6, t3) // t6 = z⁶³ = z^(2⁶-1)
 
 	// t9 = z^(2⁹ - 1)
 	mut t9 := Field{}
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t9, t6, 3) // t9 = z^((2⁶-1)·2³) = z^(2⁹-2³)
 	fe_mult(mut t9, t9, t3) // t9 = z⁵¹¹ = z^(2⁹-1)
 
 	// t18 = z^(2¹⁸ - 1)
 	mut t18 := Field{}
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t18, t9, 9) // t18 = z^((2⁹-1)·2⁹) = z^(2¹⁸-2⁹)
 	fe_mult(mut t18, t18, t9) // t18 = z^(2¹⁸-1)
 
 	// t37 = z^(2³⁷ - 1)
 	mut t37 := Field{}
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t37, t18, 18) // t37 = z^((2¹⁸-1)·2¹⁸) = z^(2³⁶-2¹⁸)
 	fe_mult(mut t37, t37, t18)
 	fe_sqr(mut t37, t37)
@@ -495,16 +503,11 @@ fn fe_power446(mut v Field, z Field) {
 	mut t111 := Field{}
 	fe_sqr_n(mut t111, t37, 37) // t111 = z^((2³⁷-1)·2³⁷) = z^(2⁷⁴-2³⁷)
 	fe_mult(mut t111, t111, t37)
-	// replaced with fe_sqr_n
 	fe_sqr_n(mut t111, t111, 37) // t111 = z^((2⁷⁴-1)·2³⁷) = z^(2¹¹¹-2³⁷)
 	fe_mult(mut t111, t111, t37) // t111 = z^(2¹¹¹-1)
 
 	// t222 = z^(2²²² - 1)
 	mut t222 := Field{}
-	// fe_sqr(mut t222, t111) writes t222 = t111², then fe_sqr_n(mut t222, t111, 111)
-	// overwrites t222 unconditionally starting from t111 again.
-	// The first call is a dead store. Remove it
-	// fe_sqr(mut t222, t111)
 	fe_sqr_n(mut t222, t111, 111) // t222 = z^((2¹¹¹-1)·2¹¹¹) = z^(2²²²-2¹¹¹)
 	fe_mult(mut t222, t222, t111) // t222 = z^(2²²²-1)
 
@@ -514,7 +517,6 @@ fn fe_power446(mut v Field, z Field) {
 	fe_mult(mut t223, t223, z) // t223 = z^(2²²³-1)
 
 	// v = z^(2⁴⁴⁶ - 2²²² - 1)
-	// reuse v instead defined a new Field
 	fe_sqr_n(mut v, t223, 223) // x = z^((2²²³-1)·2²²³) = z^(2⁴⁴⁶-2²²³)
 	fe_mult(mut v, v, t222) // v = z^(2⁴⁴⁶ - 2²²² - 1)
 }
@@ -551,7 +553,6 @@ fn fe_sqrtratio(mut r Field, u Field, v Field) (Field, int) {
 // otherwise return u.
 @[direct_array_access; inline]
 fn fe_abs(mut z Field, u Field) {
-	// mut x := Field{}
 	fe_negate(mut z, u)
 	fe_cselect(mut z, z, u, u.is_negative())
 }
@@ -597,11 +598,10 @@ fn fe_is_zero(mut x Field) int {
 
 // fe_mult multiplies two field elements: z = x · y (mod p).
 //
-// Currently routes through Karatsuba multiplication (fe_mult_karatsuba).
-// TODO: Evaluate further optimizations (e.g., Toom-Cook, FFT-based).
+// Routes through Karatsuba multiplication (fe_mult_karatsuba).
 @[direct_array_access; inline]
 fn fe_mult(mut z Field, x Field, y Field) {
-	// See fe_mult_karatsuba implementation at field_mult.v file
+	// See fe_mult_karatsuba implementation in field_mult.v
 	fe_mult_karatsuba(mut z, x, y)
 }
 
@@ -613,17 +613,15 @@ fn fe_mult(mut z Field, x Field, y Field) {
 // ~37% faster than generic multiplication for this operation.
 @[direct_array_access; inline]
 fn fe_sqr(mut z Field, a Field) {
-	// See fe_sqr_karatsuba implementation at field_mult.v file
+	// See fe_sqr_karatsuba implementation in field_mult.v
 	fe_sqr_karatsuba(mut z, a)
 }
 
 // fe_sqr_n squares x, n times: z = x^(2^n) (mod p).
 //
-// Its taken approach from openssl version of `gf_sqrn()` routine.
-// Unrolls squarings in pairs to reduce function-call overhead and
-// improve register allocation in the hot exponentiation loops.
-// When n is odd, one squaring is done first; the remainder (now even)
-// is processed in pairs via a scratch temporary.
+// Derived from the OpenSSL gf_sqrn() routine approach.
+// Unrolls squarings in pairs for small n to reduce function-call overhead and
+// improve register allocation in hot exponentiation loops.
 //
 // Preconditions: n > 0.
 @[direct_array_access; inline]
@@ -631,8 +629,7 @@ fn fe_sqr_n(mut z Field, x Field, n int) {
 	if n <= 0 {
 		return
 	}
-	// For small n (3, 9) used in fe_power446, the loop overhead is measurable.
-	// Add a hybrid approach
+	// For small n (1, 2, 3, 9) used in fe_power446, unroll squarings directly.
 	if n == 1 {
 		fe_sqr_karatsuba(mut z, x)
 	} else if n == 2 {
@@ -982,9 +979,11 @@ fn fe_weak_reduce(mut x Field) {
 	x.el[4] &= mask_56bits
 }
 
-// fe_weak_reduce_1pass is specialized reducer. Its acts like fe_weak_reduce,
-// but instead two's pass its do reducing in single-pass for use within
-// fe_sub and fe_negate call.
+// fe_weak_reduce_1pass performs a single-pass weak reduction.
+//
+// Specialized for operations such as `fe_sub` and `fe_negate` where input limb
+// bounds are tightly controlled by the 4×p subtrahend offset, allowing a single
+// carry pass and Solinas fold to normalize all limbs into [0, 2⁵⁶).
 @[direct_array_access; inline]
 fn fe_weak_reduce_1pass(mut x Field) {
 	mut c := u64(0)
@@ -1000,11 +999,11 @@ fn fe_weak_reduce_1pass(mut x Field) {
   	x.el[7] = s & mask_56bits; c = s >> 56
 	// vfmt on
 
-	// Solinas reduction
+	// Solinas reduction: 2⁴⁴⁸ ≡ 2²²⁴ + 1 (mod p)
 	x.el[0] += c
 	x.el[4] += c
 
-	// Final ripple
+	// Final ripple: absorb remaining single-bit carries into adjacent limbs.
 	x.el[1] += x.el[0] >> 56
 	x.el[0] &= mask_56bits
 	x.el[5] += x.el[4] >> 56
