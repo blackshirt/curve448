@@ -15,7 +15,7 @@ It offers ~224 bits of security and is a standard choice for ECDH key agreement 
 - **Pure V** — zero external C dependencies beyond V's standard library.
 - **RFC 7748 compliant** — correct scalar clamping; non-canonical input points are automatically reduced mod $p$ per the RFC.
 - **Type-safe key API** — distinct `PrivateKey` and `PublicKey` types prevent accidentally swapping arguments to the scalar multiplication function.
-- **High-performance field arithmetic** — unsaturated 8-limb × 56-bit representation with Solinas reduction ($2^{448} \equiv 2^{224} + 1 \pmod{p}$), Karatsuba multiplication, and a dedicated squaring path.
+- **High-performance field arithmetic** — unsaturated 8-limb × 56-bit representation with Solinas reduction ($2^{448} \equiv 2^{224} + 1 \pmod{p}$), Karatsuba multiplication, and a dedicated sq[...]
 - **Constant-time ladder** — 448-step Montgomery ladder with branchless `fe_cswap` to mitigate timing side-channel attacks.
 - **Point validation** — both strict canonical validation (`validate_point`) and lenient RFC 7748 input handling (`set_bytes_loosely`) are provided.
 
@@ -102,7 +102,7 @@ import curve448
 pub_key.validate() or { return error('rejected: ${err}') }
 ```
 
-`x448()` and `shared_secret()` already reject low-order output points at the end of the ladder, so explicit pre-validation is optional for ECDH; it is mainly useful when you want to reject suspicious peer keys early rather than after computation.
+`x448()` and `shared_secret()` already reject low-order output points at the end of the ladder, so explicit pre-validation is optional for ECDH; it is mainly useful when you want to reject suspic[...]
 
 ---
 
@@ -134,7 +134,7 @@ A 56-byte X448 point $u$-coordinate. Created via `new_public_key(b []u8)`.
 
 #### `fn x448(scalar []u8, point []u8) ![]u8`
 
-Low-level scalar multiplication. Both `scalar` and `point` must be exactly 56 bytes. The scalar is clamped internally. Non-canonical point bytes are reduced mod $p$. Returns an error if the output is a low-order point.
+Low-level scalar multiplication. Both `scalar` and `point` must be exactly 56 bytes. The scalar is clamped internally. Non-canonical point bytes are reduced mod $p$. Returns an error if the outpu[...]
 
 #### `fn validate_point(point []u8) !`
 
@@ -169,7 +169,7 @@ The library targets software timing-channel resistance:
 - **Branchless field operations** — `fe_cswap`, `fe_cselect`, and all comparisons use bitmasks rather than conditional branches.
 - **Scalar and field zeroization** — clamped scalar copies and all ladder temporaries are wiped with `defer` blocks after use.
 
-There are important caveats. This implementation has **not** been audited, has no `dudect`-style statistical timing tests, and makes no claims about physical side channels (power, EM) or microarchitectural attacks (Spectre, cache occupancy). See [SECURITY.md](SECURITY.md) for the full threat model and a detailed list of what this library does and does not protect against.
+There are important caveats. This implementation has **not** been audited, has no `dudect`-style statistical timing tests, and makes no claims about physical side channels (power, EM) or microarc[...]
 
 ---
 
@@ -198,13 +198,32 @@ Run the benchmark with:
 v run bench
 ```
 
+Optional: enable 128-bit hardware optimizations
+
+This repository supports an optional compile-time flag that enables 128-bit-wide arithmetic optimizations which can improve performance on platforms and V backends that provide native 128-bit operations. To run the included benchmark with the optimization enabled, use the V `-d` flag:
+
+```bash
+v -d use_128hw run bench
+```
+
+You can also run tests or build your project with the same flag:
+
+```bash
+v -d use_128hw test .
+v -d use_128hw build
+```
+
+Notes:
+- The performance benefit depends on your CPU and the V backend; run the benchmark both with and without the flag to measure the impact on your machine.
+- If your platform or V toolchain does not support the required wide-integer operations you may see no improvement or encounter build errors; remove the `-d use_128hw` flag if that happens.
+
 Example result (this machine): `200 iterations in 2.933s` (~68.2 ops/s).
 
 Run the benchmark to get a quick sense of performance on your machine.
 
 ## C interop / helpers
 
-This repository contains a small C-compatible helper (`util.h` / `util.c.v`) used for optional FFI experiments and tooling around the V build. The core library is pure V and does not require any C dependencies; the helper files are optional and not used by the normal `import curve448` workflow.
+This repository contains a small C-compatible helper (`util.h` / `util.c.v`) used for optional FFI experiments and tooling around the V build. The core library is pure V and does not require any [...]
 
 Also note: module metadata is in `v.mod` for direct `v` tool usage.
 
@@ -218,6 +237,6 @@ This library is known to build with recent V toolchains (0.4+). If you encounter
 
 ## Contributing
 
-Contributions are welcome. Please open issues or pull requests on GitHub. Run the test suite (`v test .`) and add tests for any new behavior. Maintain a short, focused commit and reference related issues in your PR.
+Contributions are welcome. Please open issues or pull requests on GitHub. Run the test suite (`v test .`) and add tests for any new behavior. Maintain a short, focused commit and reference relate[...]
 
 Maintainer: blackshirt
